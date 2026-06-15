@@ -1,0 +1,178 @@
+datasource db {
+  provider = "mysql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ==========================================
+// 1. USER MANAGEMENT & AUTHENTICATION MODULE
+// ==========================================
+model User {
+  id            Int            @id @default(autoincrement())
+  name          String
+  email         String         @unique
+  password      String         // Hashed string (bcrypt/argon2)
+  phoneNumber   String         @db.VarChar(20)
+  role          Role           @default(BIDDER)
+  isVerified    Boolean        @default(false) // Required for real estate security compliance
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  // Relations
+  bids          Bid[]
+  payments      Payment[]
+  properties    Property[]     // If an auctioneer/agent adds a property
+  registrations AuctionRegistration[]
+
+  @@map("users") // Best practice: lowercase plural database table names
+}
+
+enum Role {
+  BIDDER
+  AUCTIONEER
+  ADMIN
+}
+
+// ==========================================
+// 2. REAL ESTATE PROPERTY MODULE
+// ==========================================
+model Property {
+  id              Int          @id @default(autoincrement())
+  title           String       @db.VarChar(255)
+  description     String       @db.Text
+  location        String       @db.VarChar(255) // e.g., "Namiwawa, Blantyre"
+  propertyType    PropertyType @default(RESIDENTIAL)
+  
+  // Specific real estate attributes
+  bedrooms        Int?         // Nullable for vacant land plots
+  bathrooms       Int?
+  hasTitleDeed    Boolean      @default(false) // Crucial verification step in Malawi
+  documentUrl     String?      // Link to scanned deed/legal papers for transparency
+  
+  createdById     Int
+  createdBy       User         @relation(fields: [createdById], references: [id])
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  // Relations
+  auctionItems    AuctionItem[]
+
+  @@map("properties")
+}
+
+enum PropertyType {
+  RESIDENTIAL
+  COMMERCIAL
+  LAND
+  INDUSTRIAL
+}
+
+// ==========================================
+// 3. AUCTION CAMPAIGN MODULE
+// ==========================================
+model AuctionItem {
+  id             Int           @id @default(autoincrement())
+  propertyId     Int
+  property       Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  
+  reservePrice   Decimal       @db.Decimal(14, 2) // Up to 999 Billion MWK safely
+  startingBid    Decimal       @db.Decimal(14, 2)
+  depositAmount  Decimal       @db.Decimal(12, 2) // Required deposit to bid on this specific property
+  
+  startTime      DateTime
+  endTime        DateTime      // Checked against system clocks for countdowns
+  status         AuctionStatus @default(UPCOMING)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  // Relations
+  bids           Bid[]
+  images         PropertyImage[]
+  registrations  AuctionRegistration[]
+
+  @@index([status])
+  @@map("auction_items")
+}
+
+enum AuctionStatus {
+  UPCOMING
+  ACTIVE
+  CLOSED
+  SUSPENDED
+}
+
+// Auxiliary table for multiple property display photos
+model PropertyImage {
+  id            Int         @id @default(autoincrement())
+  url           String      @db.Text
+  isPrimary     Boolean     @default(false)
+  auctionItemId Int
+  auctionItem   AuctionItem @relation(fields: [auctionItemId], references: [id], onDelete: Cascade)
+
+  @@map("property_images")
+}
+
+// ==========================================
+// 4. AUCTION BIDDER REGISTRATION (Security/Vetting)
+// ==========================================
+// Before bidding on a premium asset, a user must register and pay their security deposit
+model AuctionRegistration {
+  id            Int                @id @default(autoincrement())
+  userId        Int
+  user          User               @relation(fields: [userId], references: [id])
+  auctionItemId Int
+  auctionItem   AuctionItem        @relation(fields: [auctionItemId], references: [id])
+  status        RegistrationStatus @default(PENDING) // Becomes APPROVED once deposit is processed
+  createdAt     DateTime           @default(now())
+
+  @@unique([userId, auctionItemId]) // A user registers only once per auction item
+  @@map("auction_registrations")
+}
+
+enum RegistrationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ==========================================
+// 5. LIVE TRANSACTIONAL BIDDING MODULE
+// ==========================================
+model Bid {
+  id            Int         @id @default(autoincrement())
+  amount        Decimal     @db.Decimal(14, 2)
+  createdAt     DateTime    @default(now())
+  isWinningBid  Boolean     @default(false) // Flagged automatically when auction window expires
+
+  bidderId      Int
+  bidder        User        @relation(fields: [bidderId], references: [id])
+  
+  auctionItemId Int
+  auctionItem   AuctionItem @relation(fields: [auctionItemId], references: [id], onDelete: Cascade)
+
+  @@index([auctionItemId, amount(sort: Desc)]) // Makes querying the highest bid blazing fast
+  @@map("bids")
+}
+
+// ==========================================
+// 6. FINANCIAL PAYMENTS GATEWAY LOGS (PayChangu)
+// ==========================================
+model Payment {
+  id            Int           @id @default(autoincrement())
+  userId        Int
+  user          User          @relation(fields: [userId], references: [id])
+  amount        Decimal       @db.Decimal(14, 2)
+  reference     String        @unique // The unique tx_ref returned by PayChangu
+  gatewayStatus String        // e.g., "success", "failed", "pending"
+  purpose       PaymentPurpose 
+  createdAt     DateTime      @default(now())
+
+  @@map("payments")
+}
+
+enum PaymentPurpose {
+  REGISTRATION_DEPOSIT
+  FINAL_PROPERTY_PAYMENT
+}
