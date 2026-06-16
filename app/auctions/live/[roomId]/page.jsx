@@ -1,13 +1,12 @@
-// app/auctions/live/[roomId]/page.jsx
 "use client";
 
 import { useEffect, useState, use, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { getLiveKitToken } from "@/app/actions/liveAuction";
+import { getLiveKitToken, submitLiveBid } from "@/app/actions/liveAuction";
 import { Room, Track, RoomEvent } from "livekit-client";
 import { 
   Mic, MicOff, Video, VideoOff, Monitor, PhoneOff, 
-  Gavel, Tag, Search, MessageSquare, Sparkles, Volume2, Coins, Users
+  Gavel, Tag, Search, MessageSquare, Sparkles, Volume2, Coins, Users, ShieldAlert
 } from "lucide-react";
 import Pusher from "pusher-js";
 
@@ -26,10 +25,19 @@ export default function LiveRoomPage({ params }) {
   const [participants, setParticipants] = useState([]);
   const [tracks, setTracks] = useState([]);
   
-  // Interface Toggle Switches
+  // Local User Context Cache derived from LiveKit Access Token Client-Side
+  const [currentUserRole, setCurrentUserRole] = useState("BIDDER"); 
+  const [bidAmountInput, setBidAmountInput] = useState("");
+  const [bidError, setBidError] = useState("");
+  const [isSubmittingBid, setIsSubmittingBid] = useState(false);
+
+  // Interface Toggle Hardware Switches
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCamOn, setIsCamOn] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+
+  // Concurrent Execution Lock Reference
+  const connectingRef = useRef(false);
 
   // Pusher Real-Time Bid Tracker Pipeline
   useEffect(() => {
@@ -52,13 +60,33 @@ export default function LiveRoomPage({ params }) {
     };
   }, [auctionItemId]);
 
-  // Authenticated Token Generation Lift Hooks
+  // Authenticated Token Generation Handshake Hooks
   useEffect(() => {
     async function fetchRoomPass() {
       try {
         const res = await getLiveKitToken(roomId, auctionItemId);
         if (res.success) {
           setToken(res.token);
+          
+          // Secure client-side payload inspection to derive user roles
+          try {
+            const base64Url = res.token.split('.')[1];
+            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+            const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+              return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+            }).join(''));
+            
+            const parsedToken = JSON.parse(jsonPayload);
+            if (parsedToken.sub && parsedToken.sub.startsWith("auctioneer")) {
+              setCurrentUserRole("AUCTIONEER");
+            } else if (parsedToken.sub && parsedToken.sub.startsWith("admin")) {
+              setCurrentUserRole("ADMIN");
+            } else {
+              setCurrentUserRole("BIDDER");
+            }
+          } catch (e) {
+            console.error("Token structure parsing error:", e);
+          }
         }
       } catch (err) {
         console.error("Authentication handshake failure:", err);
@@ -67,9 +95,13 @@ export default function LiveRoomPage({ params }) {
     if (roomId) fetchRoomPass();
   }, [roomId, auctionItemId]);
 
-  // LiveKit Core Engine Core Lifecycle Hook
+  // LiveKit Core Engine Lifecycle Hook
   useEffect(() => {
-    if (!token) return;
+    if (!token || !process.env.NEXT_PUBLIC_LIVEKIT_URL) return;
+    
+    // Prevent double initialization errors (Code 1006) caused by React Strict Mode
+    if (connectingRef.current) return;
+    connectingRef.current = true;
 
     const liveKitRoom = new Room({
       adaptiveStream: true,
@@ -124,14 +156,42 @@ export default function LiveRoomPage({ params }) {
         updateParticipantsAndTracks();
       } catch (error) {
         console.error("LiveKit running instance execution fault:", error);
+        connectingRef.current = false;
       }
     }
 
     connectToRoom();
-    return () => { liveKitRoom.disconnect(); };
+    
+    return () => { 
+      liveKitRoom.disconnect(); 
+      connectingRef.current = false;
+    };
   }, [token]);
 
-  // Interactive UI Callbacks
+  // Handle Bid Submission Click Action
+  const handlePlaceBidSubmit = async (e) => {
+    e.preventDefault();
+    setBidError("");
+    if (!bidAmountInput || isNaN(parseFloat(bidAmountInput))) {
+      setBidError("Please input a valid numeric amount.");
+      return;
+    }
+
+    try {
+      setIsSubmittingBid(true);
+      const res = await submitLiveBid(auctionItemId, bidAmountInput);
+      if (res.success) {
+        setBidAmountInput("");
+        setBidError("");
+      }
+    } catch (err) {
+      setBidError(err.message || "Failed to process live bid action.");
+    } finally {
+      setIsSubmittingBid(false);
+    }
+  };
+
+  // Interactive Switching Callbacks
   const handleToggleMic = async () => {
     if (!room) return;
     setIsMicOn(!isMicOn);
@@ -178,15 +238,14 @@ export default function LiveRoomPage({ params }) {
       <div className="absolute top-12 left-12 w-[450px] h-[450px] bg-purple-600/10 rounded-full filter blur-[140px] pointer-events-none" />
       <div className="absolute bottom-12 right-12 w-[350px] h-[350px] bg-fuchsia-600/5 rounded-full filter blur-[100px] pointer-events-none" />
 
-      {/* Background Multi-Track Invisible Audio Stream Element Mixer */}
+      {/* Audio Element Node Renderer */}
       <AudioRenderer tracks={tracks} />
 
       {/* =========================================================
-          LEFT PANEL: IMMERSIVE FROSTED STREAM PRESENTATION CANVAS
+          LEFT PANEL: IMMERSIVE STREAM CANVAS AREA
           ========================================================= */}
-      <div className="flex-1 flex flex-col min-w-0 h-[58%] lg:h-full gap-4 relative">
+      <div className="flex-1 flex flex-col min-w-0 h-[55%] lg:h-full gap-4 relative">
         
-        {/* Upper Top Navbar Header Bar */}
         <div className="w-full flex items-center justify-between z-10 shrink-0">
           <div className="flex flex-col gap-0.5">
             <div className="flex items-center gap-2">
@@ -204,7 +263,6 @@ export default function LiveRoomPage({ params }) {
           </div>
         </div>
 
-        {/* Dynamic Multi-Grid Feed Area Container */}
         <div className="flex-1 w-full relative min-h-0 rounded-2xl overflow-hidden bg-white/[0.01] border border-white/[0.05] backdrop-blur-sm p-3 box-border flex flex-col justify-center">
           
           {screenShareFeed ? (
@@ -216,7 +274,6 @@ export default function LiveRoomPage({ params }) {
                 </div>
               </div>
 
-              {/* Connected Video Strips Bottom Pipeline */}
               <div className="h-20 shrink-0 flex items-center gap-3 overflow-x-auto pt-1 scrollbar-none">
                 {videoFeeds.map((feed, i) => (
                   <div key={i} className="w-36 h-full bg-black/40 rounded-xl overflow-hidden border border-white/[0.05] relative shrink-0 shadow-lg">
@@ -229,12 +286,10 @@ export default function LiveRoomPage({ params }) {
               </div>
             </div>
           ) : videoFeeds.length <= 1 ? (
-            /* Main Big Spotlight Individual Container Frame */
             <div className="w-full h-full bg-black/20 rounded-xl overflow-hidden relative shadow-2xl border border-white/[0.05] flex items-center justify-center">
               {videoFeeds[0] ? (
                 <>
                   <VideoFeedElement track={videoFeeds[0].track} isLocal={videoFeeds[0].participant?.isLocal} />
-                  {/* Layered Floating Glass Identification Container */}
                   <div className="absolute bottom-4 left-4 bg-black/40 backdrop-blur-xl border border-white/[0.08] px-3 py-1.5 rounded-xl text-white text-xs font-semibold tracking-wide shadow-xl">
                     {videoFeeds[0].participant?.name || videoFeeds[0].participant?.identity}
                   </div>
@@ -244,7 +299,6 @@ export default function LiveRoomPage({ params }) {
               )}
             </div>
           ) : (
-            /* Grid Responsive Grid Sub-Distribution Blocks */
             <div className="w-full h-full flex flex-col gap-3">
               <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-3 w-full h-full min-h-0">
                 {videoFeeds.slice(0, 2).map((feed, i) => (
@@ -271,7 +325,7 @@ export default function LiveRoomPage({ params }) {
             </div>
           )}
 
-          {/* Centered Floating Frosted Glass Action Switchboard Row */}
+          {/* Switchboard Floating Controls Row */}
           <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20">
             <div className="flex items-center gap-3 bg-white/[0.02] backdrop-blur-2xl px-4 py-2.5 rounded-2xl border border-white/[0.08] shadow-[0_20px_50px_rgba(0,0,0,0.5)]">
               
@@ -321,11 +375,10 @@ export default function LiveRoomPage({ params }) {
       </div>
 
       {/* =========================================================
-          RIGHT PANEL: COMPREHENSIVE GLASS CONTROL DESK SIDEBAR
+          RIGHT PANEL: COMPREHENSIVE CONTROL DESK SIDEBAR
           ========================================================= */}
-      <div className="flex-1 lg:flex-none lg:w-80 xl:w-96 bg-white/[0.02] backdrop-blur-2xl border border-white/[0.06] rounded-2xl flex flex-col h-[42%] lg:h-full min-h-0 shadow-[0_24px_60px_rgba(0,0,0,0.4)] overflow-hidden shrink-0 z-30">
+      <div className="flex-1 lg:flex-none lg:w-80 xl:w-96 bg-white/[0.02] backdrop-blur-2xl border border-white/[0.06] rounded-2xl flex flex-col h-[45%] lg:h-full min-h-0 shadow-[0_24px_60px_rgba(0,0,0,0.4)] overflow-hidden shrink-0 z-30">
         
-        {/* Toggle Headings Command Row */}
         <div className="flex items-center justify-between p-3 border-b border-white/[0.05] shrink-0 bg-white/[0.01]">
           <span className="text-[10px] uppercase tracking-widest text-purple-400 font-bold ml-1">Room Deck</span>
           <div className="flex items-center bg-black/20 p-1 rounded-xl border border-white/[0.04]">
@@ -351,57 +404,100 @@ export default function LiveRoomPage({ params }) {
           </div>
         </div>
 
-        {/* Swappable Window Component Frames */}
-        <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {activeTab === "bids" ? (
-            <div className="flex-1 flex flex-col min-h-0">
+            <div className="flex-1 flex flex-col min-h-0 justify-between">
               
-              {/* Premium Top Line Real-time Metrics Layer Panel */}
-              <div className="p-4 mx-3 mt-3 bg-gradient-to-br from-white/[0.03] to-transparent rounded-xl border border-white/[0.05] flex items-center justify-between shadow-inner">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[9px] uppercase tracking-wider text-purple-400 font-bold flex items-center gap-1">
-                    <Coins className="w-3 h-3" /> Top Entry Amount
-                  </span>
-                  <span className="text-base font-bold text-white tracking-tight font-mono">
-                    MWK {bids.length > 0 ? Number(bids[0].amount).toLocaleString() : "0.00"}
-                  </span>
+              <div className="flex-1 flex flex-col min-h-0">
+                <div className="p-4 mx-3 mt-3 bg-gradient-to-br from-white/[0.03] to-transparent rounded-xl border border-white/[0.05] flex items-center justify-between shadow-inner shrink-0">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[9px] uppercase tracking-wider text-purple-400 font-bold flex items-center gap-1">
+                      <Coins className="w-3 h-3" /> Top Entry Amount
+                    </span>
+                    <span className="text-base font-bold text-white tracking-tight font-mono">
+                      MWK {bids.length > 0 ? Number(bids[0].amount).toLocaleString() : "0.00"}
+                    </span>
+                  </div>
+                  <div className="text-right flex flex-col gap-0.5">
+                    <span className="text-[9px] uppercase tracking-wider text-purple-400 font-bold">Velocity</span>
+                    <span className="text-xs font-bold text-purple-300 font-mono">{bids.length} placed</span>
+                  </div>
                 </div>
-                <div className="text-right flex flex-col gap-0.5">
-                  <span className="text-[9px] uppercase tracking-wider text-purple-400 font-bold">Velocity</span>
-                  <span className="text-xs font-bold text-purple-300 font-mono">{bids.length} placed</span>
+
+                <div className="flex-1 overflow-y-auto p-3 space-y-2.5 scrollbar-none min-h-0">
+                  {bids.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center p-6 text-purple-500/40">
+                      <Tag className="w-4 h-4 mb-2 opacity-50" />
+                      <span className="text-xs">Waiting for room entries...</span>
+                    </div>
+                  ) : (
+                    bids.map((bid, idx) => (
+                      <div key={bid.id || idx} className="flex items-center justify-between p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.04] hover:bg-white/[0.04] hover:border-white/[0.08] transition-all shadow-sm">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-7 h-7 rounded-lg bg-white/[0.04] border border-white/[0.06] text-purple-300 font-bold text-xs flex items-center justify-center shrink-0">
+                            {bid.bidderName ? bid.bidderName.charAt(0).toUpperCase() : "U"}
+                          </div>
+                          <div className="truncate">
+                            <p className="text-xs font-medium text-white truncate">{bid.bidderName}</p>
+                            <p className="text-[9px] text-purple-400/60 font-medium tracking-wider uppercase">Verified Room Connection</p>
+                          </div>
+                        </div>
+                        <span className="text-xs font-bold text-white font-mono shrink-0 pl-2">
+                          MWK {Number(bid.amount).toLocaleString()}
+                        </span>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
-              {/* Live Streaming Real-time Activity Feed Logging Layer */}
-              <div className="flex-1 overflow-y-auto p-3 space-y-2.5 scrollbar-none">
-                {bids.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center p-6 text-purple-500/40">
-                    <Tag className="w-4 h-4 mb-2 opacity-50" />
-                    <span className="text-xs">Waiting for room entries...</span>
-                  </div>
-                ) : (
-                  bids.map((bid, idx) => (
-                    <div key={bid.id || idx} className="flex items-center justify-between p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.04] hover:bg-white/[0.04] hover:border-white/[0.08] transition-all shadow-sm">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-7 h-7 rounded-lg bg-white/[0.04] border border-white/[0.06] text-purple-300 font-bold text-xs flex items-center justify-center shrink-0">
-                          {bid.bidderName ? bid.bidderName.charAt(0).toUpperCase() : "U"}
-                        </div>
-                        <div className="truncate">
-                          <p className="text-xs font-medium text-white truncate">{bid.bidderName}</p>
-                          <p className="text-[9px] text-purple-400/60 font-medium tracking-wider uppercase">Verified Room Connection</p>
-                        </div>
+              {/* Secure Action Interactive Input Form Footer Strip */}
+              <div className="p-3 bg-black/30 border-t border-white/[0.05] shrink-0">
+                {currentUserRole === "BIDDER" ? (
+                  <form onSubmit={handlePlaceBidSubmit} className="space-y-2">
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-xs font-bold text-purple-500">
+                          MWK
+                        </span>
+                        <input
+                          type="number"
+                          step="any"
+                          value={bidAmountInput}
+                          onChange={(e) => setBidAmountInput(e.target.value)}
+                          placeholder="Enter higher value amount..."
+                          disabled={isSubmittingBid}
+                          className="w-full bg-white/[0.02] border border-white/[0.08] rounded-xl pl-14 pr-3 py-2.5 font-mono text-sm text-white focus:outline-none focus:border-purple-500 focus:bg-white/[0.04] transition-all placeholder-purple-700/60 disabled:opacity-50"
+                        />
                       </div>
-                      <span className="text-xs font-bold text-white font-mono shrink-0 pl-2">
-                        MWK {Number(bid.amount).toLocaleString()}
-                      </span>
+                      <button
+                        type="submit"
+                        disabled={isSubmittingBid}
+                        className="px-4 bg-gradient-to-r from-purple-600 to-fuchsia-600 hover:from-purple-500 hover:to-fuchsia-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-[0_4px_12px_rgba(168,85,247,0.3)] border border-purple-500/20 shrink-0 disabled:opacity-50"
+                      >
+                        <Gavel className="w-3.5 h-3.5" /> Place Bid
+                      </button>
                     </div>
-                  ))
+                    {bidError && (
+                      <p className="text-[11px] font-medium text-rose-400 pl-1 animate-pulse">
+                        ⚠️ {bidError}
+                      </p>
+                    )}
+                  </form>
+                ) : (
+                  <div className="p-3 rounded-xl bg-purple-950/20 border border-purple-900/40 flex items-center gap-3">
+                    <ShieldAlert className="w-5 h-5 text-purple-400 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-white uppercase tracking-wide">Observer Mode Active</p>
+                      <p className="text-[10px] text-purple-400/80 leading-relaxed">Your authorization tier restricts entry creation inside this asset lot slot.</p>
+                    </div>
+                  </div>
                 )}
               </div>
+
             </div>
           ) : (
             <div className="flex-1 flex flex-col min-h-0">
-              {/* Dynamic Connection Identity Filter Line */}
               <div className="p-3 shrink-0">
                 <div className="relative flex items-center">
                   <Search className="w-3.5 h-3.5 absolute left-3 text-purple-500 pointer-events-none" />
@@ -413,7 +509,6 @@ export default function LiveRoomPage({ params }) {
                 </div>
               </div>
 
-              {/* Connected Active Roster Pipeline Block */}
               <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-1 min-h-0 scrollbar-none">
                 {participants.map((p, i) => {
                   const isLocal = room && p.identity === room.localParticipant?.identity;
