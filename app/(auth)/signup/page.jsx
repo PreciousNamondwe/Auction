@@ -7,7 +7,7 @@ import Image from "next/image";
 import { signIn } from "next-auth/react"; // Import client handler
 
 export default function SignUpPage() {
-  const [role, setRole] = useState<"BIDDER" | "AUCTIONEER">("BIDDER");
+  const [role, setRole] = useState("BIDDER");
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -16,12 +16,12 @@ export default function SignUpPage() {
   });
 
   // Handles text credential tracking
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
   // Handles standard MySQL database email/password submissions
-  const handleCredentialsSubmit = async (e: React.FormEvent) => {
+  const handleCredentialsSubmit = async (e) => {
     e.preventDefault();
     
     try {

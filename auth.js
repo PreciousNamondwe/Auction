@@ -1,15 +1,14 @@
 import Google from "next-auth/providers/google";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import type { NextAuthConfig } from "next-auth";
 import { PrismaClient } from "@prisma/client";
 import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 import bcrypt from "bcryptjs";
 
 // Global declaration to prevent open database handle leaks during Next.js Hot Reloads
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
+const globalForPrisma = globalThis;
 
-function getPrismaClient(): PrismaClient {
+function getPrismaClient() {
   if (globalForPrisma.prisma) {
     return globalForPrisma.prisma;
   }
@@ -34,7 +33,7 @@ function getPrismaClient(): PrismaClient {
   return client;
 }
 
-export const authConfig: NextAuthConfig = {
+export const authConfig = {
   session: {
     strategy: "jwt",
   },
@@ -49,17 +48,16 @@ export const authConfig: NextAuthConfig = {
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
 
-        // FIXED: Reuses your stable, pooled Prisma instance
         const prisma = getPrismaClient();
 
         // Query the user table securely
         const user = await prisma.user.findUnique({
-          where: { email: credentials.email as string }
+          where: { email: credentials.email }
         });
 
         // Verify user presence and password match safely
         if (!user || !user.password) return null;
-        const isPasswordValid = await bcrypt.compare(credentials.password as string, user.password);
+        const isPasswordValid = await bcrypt.compare(credentials.password, user.password);
 
         if (!isPasswordValid) return null;
 
@@ -67,21 +65,36 @@ export const authConfig: NextAuthConfig = {
           id: String(user.id), 
           email: user.email,
           name: user.name,
-          role: user.role,
+          role: user.role, // Passed directly into the initial JWT token execution
         };
       }
     })
   ],
   callbacks: {
-    async jwt({ token, user }: any) {
+    async jwt({ token, user, account }) {
+      const prisma = getPrismaClient();
+
+      // 1. Initial Login Event Handlers
       if (user) {
         token.id = user.id; 
-        token.role = (user as any).role;
+        token.role = user.role;
       }
+
+      // 2. Social Sign-In Safeguard (Google Oauth doesn't execute authorize method)
+      if (account?.provider === "google" && token.email) {
+        const dbUser = await prisma.user.findUnique({
+          where: { email: token.email }
+        });
+        if (dbUser) {
+          token.id = String(dbUser.id);
+          token.role = dbUser.role;
+        }
+      }
+      
       return token;
     },
-    async session({ session, token }: any) {
-      if (session.user) {
+    async session({ session, token }) {
+      if (session.user && token) {
         session.user.id = token.id;
         session.user.role = token.role;
       }

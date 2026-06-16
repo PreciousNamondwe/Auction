@@ -3,9 +3,10 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 import bcrypt from "bcryptjs";
 
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
+// Clean JavaScript global object caching for development hot-reloads
+const globalForPrisma = globalThis;
 
-function getPrismaClient(): PrismaClient {
+function getPrismaClient() {
   if (globalForPrisma.prisma) {
     return globalForPrisma.prisma;
   }
@@ -30,7 +31,7 @@ function getPrismaClient(): PrismaClient {
   return client;
 }
 
-export async function POST(req: Request) {
+export async function POST(req) {
   try {
     const body = await req.json();
     // Destructure 'phone' from the frontend payload
@@ -56,7 +57,7 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json({ success: true, userId: newUser.id }, { status: 201 });
-  } catch (error: any) {
+  } catch (error) {
     console.error("❌ Registration Database Crash Details:", error);
     return NextResponse.json({ message: error.message }, { status: 500 });
   }

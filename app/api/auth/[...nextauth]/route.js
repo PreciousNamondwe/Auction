@@ -3,10 +3,8 @@ import { authConfig } from "../../../../auth";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { PrismaClient } from "@prisma/client";
 import { PrismaMariaDb } from "@prisma/adapter-mariadb";
-import type { Adapter } from "next-auth/adapters";
-import { NextRequest } from "next/server";
 
-async function handler(req: NextRequest, ctx: any) {
+async function handler(req, ctx) {
   const connectionString = process.env.DATABASE_URL || "mysql://root:root@127.0.0.1:3306/e-auction";
   const dbUrl = new URL(connectionString);
 
@@ -22,14 +20,14 @@ async function handler(req: NextRequest, ctx: any) {
 
   const { handlers } = NextAuth({
     ...authConfig,
-    adapter: PrismaAdapter(prisma) as Adapter,
+    adapter: PrismaAdapter(prisma),
   });
 
-  // FIXED: Explicitly casting handlers to 'any' allows passing the Next.js execution context parameter cleanly
+  // JavaScript cleanly processes the dynamic Next.js execution context parameter natively
   if (req.method === "GET") {
-    return await (handlers.GET as any)(req, ctx);
+    return await handlers.GET(req, ctx);
   } else {
-    return await (handlers.POST as any)(req, ctx);
+    return await handlers.POST(req, ctx);
   }
 }
 

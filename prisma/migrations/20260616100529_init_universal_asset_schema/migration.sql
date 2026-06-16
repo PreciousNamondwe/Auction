@@ -15,16 +15,14 @@ CREATE TABLE `users` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
-CREATE TABLE `properties` (
+CREATE TABLE `assets` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
     `title` VARCHAR(255) NOT NULL,
     `description` TEXT NOT NULL,
     `location` VARCHAR(255) NOT NULL,
-    `propertyType` ENUM('RESIDENTIAL', 'COMMERCIAL', 'LAND', 'INDUSTRIAL') NOT NULL DEFAULT 'RESIDENTIAL',
-    `bedrooms` INTEGER NULL,
-    `bathrooms` INTEGER NULL,
-    `hasTitleDeed` BOOLEAN NOT NULL DEFAULT false,
-    `documentUrl` VARCHAR(191) NULL,
+    `assetCategory` ENUM('REAL_ESTATE', 'VEHICLE', 'MACHINERY', 'ELECTRONICS', 'OTHER') NOT NULL DEFAULT 'OTHER',
+    `attributes` JSON NULL,
+    `documentUrl` TEXT NULL,
     `createdById` INTEGER NOT NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
@@ -35,22 +33,24 @@ CREATE TABLE `properties` (
 -- CreateTable
 CREATE TABLE `auction_items` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
-    `propertyId` INTEGER NOT NULL,
+    `assetId` INTEGER NOT NULL,
     `reservePrice` DECIMAL(14, 2) NOT NULL,
     `startingBid` DECIMAL(14, 2) NOT NULL,
     `depositAmount` DECIMAL(12, 2) NOT NULL,
     `startTime` DATETIME(3) NOT NULL,
     `endTime` DATETIME(3) NOT NULL,
     `status` ENUM('UPCOMING', 'ACTIVE', 'CLOSED', 'SUSPENDED') NOT NULL DEFAULT 'UPCOMING',
+    `liveRoomId` VARCHAR(100) NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
+    UNIQUE INDEX `auction_items_liveRoomId_key`(`liveRoomId`),
     INDEX `auction_items_status_idx`(`status`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
-CREATE TABLE `property_images` (
+CREATE TABLE `asset_images` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
     `url` TEXT NOT NULL,
     `isPrimary` BOOLEAN NOT NULL DEFAULT false,
@@ -99,13 +99,13 @@ CREATE TABLE `payments` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- AddForeignKey
-ALTER TABLE `properties` ADD CONSTRAINT `properties_createdById_fkey` FOREIGN KEY (`createdById`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE `assets` ADD CONSTRAINT `assets_createdById_fkey` FOREIGN KEY (`createdById`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `auction_items` ADD CONSTRAINT `auction_items_propertyId_fkey` FOREIGN KEY (`propertyId`) REFERENCES `properties`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE `auction_items` ADD CONSTRAINT `auction_items_assetId_fkey` FOREIGN KEY (`assetId`) REFERENCES `assets`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `property_images` ADD CONSTRAINT `property_images_auctionItemId_fkey` FOREIGN KEY (`auctionItemId`) REFERENCES `auction_items`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE `asset_images` ADD CONSTRAINT `asset_images_auctionItemId_fkey` FOREIGN KEY (`auctionItemId`) REFERENCES `auction_items`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `auction_registrations` ADD CONSTRAINT `auction_registrations_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;

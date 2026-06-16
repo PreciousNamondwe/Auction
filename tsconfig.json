@@ -29,6 +29,6 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "**/*.mts"
-  ],
+, "app/actions/liveAuction.js", "app/auctions/live/[roomId]/page.jsx", "app/dashboard/page.jsx", "app/api/auth/[...nextauth]/route.js", "app/api/register/route.js", "app/(auth)/login/page.jsx", "app/(auth)/signup/page.jsx", "components/dashboard/AuctioneerDashboard.jsx", "components/dashboard/BidderDashboard.jsx", "auth.js"  ],
   "exclude": ["node_modules"]
 }

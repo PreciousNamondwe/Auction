@@ -8,5 +8,8 @@ export default defineConfig({
   datasource: {
     // This tells Prisma CLI tools exactly where to look for your connection URL
     url: process.env.DATABASE_URL || "mysql://root:root@127.0.0.1:3306/e-auction",
-  }
+  },
+  migrations: {
+    seed: 'npx tsx ./prisma/seed.ts', 
+  },
 });
