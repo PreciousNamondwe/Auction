@@ -11,7 +11,7 @@ function getPrismaClient() {
     return globalForPrisma.prisma;
   }
 
-  const connectionString = process.env.DATABASE_URL || "mysql://root:root@127.0.0.1:3306/e-auction";
+  const connectionString = process.env.DATABASE_URL || "mysql://root:precious@127.0.0.1:3306/e-auction";
   const dbUrl = new URL(connectionString);
 
   const dbAdapter = new PrismaMariaDb({

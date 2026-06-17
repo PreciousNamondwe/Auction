@@ -15,20 +15,24 @@ const pusher = new Pusher({
 });
 
 /**
- * ⚡ AUCTIONEER STAGE: Direct Live Launch Engine
+ * 🚨 AUCTIONEER STAGE: Direct Live Launch Engine
  */
 export async function approveAndStartLiveAuction(auctionItemId) {
   try {
     const session = await auth();
     if (!session || !session.user) {
-      throw new Error("Authentication verification rejected.");
+      return { success: false, error: "Authentication verification rejected." };
     }
 
     if (session.user.role !== "AUCTIONEER" && session.user.role !== "ADMIN") {
-      throw new Error("Access Denied: Only certified auctioneers can spin up live lots.");
+      return { success: false, error: "Access Denied: Only certified auctioneers can spin up live lots." };
     }
 
     const cleanId = Number(auctionItemId);
+    if (isNaN(cleanId)) {
+      return { success: false, error: "Provided auction item ID is invalid." };
+    }
+
     const generatedRoomId = `room-lot-${cleanId}-${Date.now()}`;
 
     const updatedItem = await prisma.auctionItem.update({
@@ -67,29 +71,28 @@ export async function approveAndStartLiveAuction(auctionItemId) {
 
     return { success: true, roomId: generatedRoomId };
   } catch (error) {
-    console.error("❌ Live Initialization Failure:", error.message);
-    throw new Error(error.message || "Failed to approve broadcast instance.");
+    console.error("❌ Live Initialization Failure:", error);
+    return { success: false, error: error.message || "Failed to approve broadcast instance." };
   }
 }
 
 /**
  * 🎫 ROOM TOKEN FACTORY
- * Configured so bidders can join the exact room initialized by the auctioneer and converse freely.
  */
 export async function getLiveKitToken(roomId, auctionItemId) {
   try {
     const session = await auth();
     if (!session || !session.user) {
-      throw new Error("Authentication rejected.");
+      return { success: false, error: "Authentication rejected." };
     }
 
     const apiKey = process.env.LIVEKIT_API_KEY;
     const apiSecret = process.env.LIVEKIT_API_SECRET;
     if (!apiKey || !apiSecret) {
-      throw new Error("Missing WebRTC infrastructure credentials.");
+      return { success: false, error: "Missing WebRTC infrastructure credentials." };
     }
 
-    const role = session.user.role; 
+    const role = session.user.role || "BIDDER"; 
     const participantIdentity = `${role.toLowerCase()}-${session.user.id}`;
 
     const at = new AccessToken(apiKey, apiSecret, {
@@ -106,7 +109,6 @@ export async function getLiveKitToken(roomId, auctionItemId) {
         roomAdmin: true,    
       });
     } else {
-      // ✅ FIXED: Shifted from false to true so bidders can use microphones and cameras to converse
       at.addGrant({
         roomJoin: true,
         room: roomId,
@@ -118,27 +120,37 @@ export async function getLiveKitToken(roomId, auctionItemId) {
     const token = await at.toJwt();
     return { success: true, token };
   } catch (error) {
-    console.error("❌ Token Generation Failure:", error.message);
-    throw new Error("Failed to secure connection pass.");
+    console.error("❌ Token Generation Failure:", error);
+    return { success: false, error: "Failed to secure connection pass." };
   }
 }
 
 /**
- * 🔨 TRANSACTION MANAGEMENT
+ * 🔨 TRANSACTION MANAGEMENT (Fixed to protect from raw unhandled exceptions & ID casting errors)
  */
 export async function submitLiveBid(auctionItemId, amount) {
   try {
+    // 1. Session authentication verification check
     const session = await auth();
     if (!session || !session.user) {
-      throw new Error("Authentication rejected.");
+      return { success: false, error: "Session expired or missing. Please log in again." };
     }
 
+    // 2. Clear out users with incorrect bidding clearance roles
     if (session.user.role === "AUCTIONEER" || session.user.role === "ADMIN") {
-      throw new Error("Access Denied: Managers and Auctioneers can only monitor. You are blocked from bidding.");
+      return { success: false, error: "Access Denied: Managers and Auctioneers can only monitor. You are blocked from bidding." };
     }
 
+    // 3. Fallback tracking logic for the database target format
     const targetLotId = Number(auctionItemId);
     const incomingAmount = parseFloat(amount);
+
+    if (isNaN(targetLotId)) {
+      return { success: false, error: "Invalid layout configuration parameter: Lot item value cannot be read." };
+    }
+    if (isNaN(incomingAmount) || incomingAmount <= 0) {
+      return { success: false, error: "The provided bid layout entry must contain a positive numerical value." };
+    }
 
     const targetItem = await prisma.auctionItem.findUnique({
       where: { id: targetLotId },
@@ -147,20 +159,26 @@ export async function submitLiveBid(auctionItemId, amount) {
       }
     });
 
-    if (!targetItem) throw new Error("Target inventory lot does not exist.");
+    if (!targetItem) {
+      return { success: false, error: "Target inventory lot does not exist." };
+    }
+
     if (targetItem.status !== "ACTIVE" && targetItem.status !== "LIVE") {
-      throw new Error("Bidding session is currently not accepting active offers.");
+      return { success: false, error: `Bidding session is currently not accepting active offers. (Current Status: ${targetItem.status})` };
     }
 
     const highestBidValue = targetItem.bids[0]?.amount ? Number(targetItem.bids[0].amount) : Number(targetItem.startingBid);
     if (incomingAmount <= highestBidValue) {
-      throw new Error(`Bid must exceed current high mark of MWK ${highestBidValue.toLocaleString()}.`);
+      return { success: false, error: `Bid must exceed current high mark of MWK ${highestBidValue.toLocaleString()}.` };
     }
+
+    // Adapt database user ID schema strategy safely (converts alpha string models vs integers seamlessly)
+    const interpretedBidderId = isNaN(Number(session.user.id)) ? session.user.id : Number(session.user.id);
 
     const placedBid = await prisma.bid.create({
       data: {
         auctionItemId: targetLotId,
-        bidderId: Number(session.user.id),
+        bidderId: interpretedBidderId,
         amount: incomingAmount,
       }
     });
@@ -175,20 +193,19 @@ export async function submitLiveBid(auctionItemId, amount) {
     await pusher.trigger(`auction-room-${targetLotId}`, "new-bid", broadcastPayload);
     return { success: true, bid: broadcastPayload };
   } catch (error) {
-    console.error("❌ Live Bid Processing Failure:", error.message);
-    throw new Error(error.message || "Could not log execution payload.");
+    console.error("❌ Live Bid Processing Failure:", error);
+    return { success: false, error: error.message || "An unexpected database operation exception was caught." };
   }
 }
 
 /**
  * 📡 DATABASE CATCH-UP ENGINE
- * Fetches ongoing auctions from the database directly so newly signed up / logged in users see the active stream popup immediately.
  */
 export async function getActiveLiveAuctions() {
   try {
     const session = await auth();
     if (!session || !session.user) {
-      throw new Error("Authentication verification rejected.");
+      return { success: false, items: [], error: "Authentication verification rejected." };
     }
 
     const activeItems = await prisma.auctionItem.findMany({
@@ -220,7 +237,7 @@ export async function getActiveLiveAuctions() {
       }))
     };
   } catch (error) {
-    console.error("❌ Active Lot Catch-up Failure:", error.message);
+    console.error("❌ Active Lot Catch-up Failure:", error);
     return { success: false, items: [], error: error.message };
   }
 }
@@ -232,7 +249,7 @@ export async function updateAuctionToLiveDirectly(itemId, computedRoomId) {
   try {
     const session = await auth();
     if (!session || (session.user.role !== "AUCTIONEER" && session.user.role !== "ADMIN")) {
-      throw new Error("Unauthorized structural database update.");
+      return { success: false, error: "Unauthorized structural database update." };
     }
 
     const record = await prisma.auctionItem.update({
@@ -243,9 +260,10 @@ export async function updateAuctionToLiveDirectly(itemId, computedRoomId) {
       },
     });
     
-    return JSON.parse(JSON.stringify(record));
+    return { success: true, data: JSON.parse(JSON.stringify(record)) };
   } catch (err) {
-    throw new Error(err.message);
+    console.error("❌ Status update failure:", err);
+    return { success: false, error: err.message };
   }
 }
 
@@ -256,7 +274,7 @@ export async function closeLiveAuctionDirectly(itemId) {
   try {
     const session = await auth();
     if (!session || (session.user.role !== "AUCTIONEER" && session.user.role !== "ADMIN")) {
-      throw new Error("Unauthorized structural database update.");
+      return { success: false, error: "Unauthorized structural database update." };
     }
 
     const record = await prisma.auctionItem.update({
@@ -266,8 +284,9 @@ export async function closeLiveAuctionDirectly(itemId) {
       },
     });
     
-    return JSON.parse(JSON.stringify(record));
+    return { success: true, data: JSON.parse(JSON.stringify(record)) };
   } catch (err) {
-    throw new Error(err.message);
+    console.error("❌ Status close failure:", err);
+    return { success: false, error: err.message };
   }
 }
