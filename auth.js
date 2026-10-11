@@ -1,32 +1,14 @@
 import Google from "next-auth/providers/google";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { PrismaClient } from "@prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { users } from "@/lib/db/schema";
 import bcrypt from "bcryptjs";
 
-// Global declaration to prevent open database handle leaks during Next.js Hot Reloads
-const globalForPrisma = globalThis;
-
-function getPrismaClient() {
-  if (globalForPrisma.prisma) {
-    return globalForPrisma.prisma;
-  }
-
-  // Prisma 7.x with PostgreSQL adapter
-  const adapter = new PrismaPg({
-    connectionString: process.env.DATABASE_URL,
-  });
-  const client = new PrismaClient({ adapter });
-
-  if (process.env.NODE_ENV !== "production") {
-    globalForPrisma.prisma = client;
-  }
-
-  return client;
-}
-
 export const authConfig = {
+  trustHost: true,
   session: {
     strategy: "jwt",
   },
@@ -41,13 +23,9 @@ export const authConfig = {
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
 
-        const prisma = getPrismaClient();
+        const [user] = await db.select().from(users).where(eq(users.email, credentials.email)).limit(1);
 
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email }
-        });
-
-        if (!user || !user.password) return null;
+        if (!user?.password?.startsWith("$2")) return null;
         const isPasswordValid = await bcrypt.compare(credentials.password, user.password);
 
         if (!isPasswordValid) return null;
@@ -62,18 +40,30 @@ export const authConfig = {
     })
   ],
   callbacks: {
-    async jwt({ token, user, account }) {
-      const prisma = getPrismaClient();
+    async signIn({ user, account }) {
+      if (account?.provider !== "google" || !user.email) return true;
 
+      const [existingUser] = await db.select().from(users).where(eq(users.email, user.email)).limit(1);
+      if (existingUser) return true;
+
+      await db.insert(users).values({
+        name: user.name || user.email,
+        email: user.email,
+        password: `oauth:${randomUUID()}`,
+        phoneNumber: "",
+        isVerified: true,
+      }).onConflictDoNothing({ target: users.email });
+
+      return true;
+    },
+    async jwt({ token, user, account }) {
       if (user) {
         token.id = user.id; 
         token.role = user.role;
       }
 
       if (account?.provider === "google" && token.email) {
-        const dbUser = await prisma.user.findUnique({
-          where: { email: token.email }
-        });
+        const [dbUser] = await db.select().from(users).where(eq(users.email, token.email)).limit(1);
         if (dbUser) {
           token.id = String(dbUser.id);
           token.role = dbUser.role;

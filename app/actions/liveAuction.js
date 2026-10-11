@@ -3,7 +3,9 @@
 
 import { AccessToken } from "livekit-server-sdk";
 import { auth } from "../../auth";
-import { prisma } from "@/lib/prisma"; 
+import { db } from "@/lib/db";
+import { auctionItems, bids } from "@/lib/db/schema";
+import { desc, eq } from "drizzle-orm";
 import Pusher from "pusher";
 
 const pusher = new Pusher({
@@ -35,32 +37,31 @@ export async function approveAndStartLiveAuction(auctionItemId) {
 
     const generatedRoomId = `room-lot-${cleanId}-${Date.now()}`;
 
-    const updatedItem = await prisma.auctionItem.update({
-      where: { id: cleanId },
-      data: { 
+    const [updatedItem] = await db.update(auctionItems).set({
         status: "ACTIVE",              
-        liveRoomId: generatedRoomId     
-      },
-      include: {
+        liveRoomId: generatedRoomId,
+      }).where(eq(auctionItems.id, cleanId)).returning();
+
+    if (!updatedItem) return { success: false, error: "Auction item not found." };
+    const itemDetails = await db.query.auctionItems.findFirst({
+      where: eq(auctionItems.id, cleanId),
+      with: {
         asset: true,
-        images: {
-          where: { isPrimary: true },
-          take: 1
-        }
-      }
+        images: { where: (image, { eq }) => eq(image.isPrimary, true), limit: 1 },
+      },
     });
 
-    const primaryImageUrl = updatedItem.images[0]?.url || "/placeholder-property.jpg";
+    const primaryImageUrl = itemDetails.images[0]?.url || "/placeholder-property.jpg";
 
     const systemNotificationPayload = {
       id: String(Date.now()),
       auctionItemId: updatedItem.id,
       roomId: generatedRoomId,
       title: "🚨 Live Auction Approved & Open",
-      itemTitle: updatedItem.asset?.title || "Unnamed Asset",
-      description: updatedItem.asset?.description || "No asset description listed.",
-      location: updatedItem.asset?.location || "N/A",
-      category: updatedItem.asset?.category || "General",
+      itemTitle: itemDetails.asset?.title || "Unnamed Asset",
+      description: itemDetails.asset?.description || "No asset description listed.",
+      location: itemDetails.asset?.location || "N/A",
+      category: itemDetails.asset?.category || "General",
       startingBid: Number(updatedItem.startingBid),
       depositAmount: Number(updatedItem.depositAmount),
       imageUrl: primaryImageUrl,
@@ -149,11 +150,9 @@ export async function submitLiveBid(auctionItemId, amount) {
       return { success: false, error: "The provided bid layout entry must contain a positive numerical value." };
     }
 
-    const targetItem = await prisma.auctionItem.findUnique({
-      where: { id: targetLotId },
-      include: {
-        bids: { orderBy: { amount: "desc" }, take: 1 }
-      }
+    const targetItem = await db.query.auctionItems.findFirst({
+      where: eq(auctionItems.id, targetLotId),
+      with: { bids: { orderBy: [desc(bids.amount)], limit: 1 } },
     });
 
     if (!targetItem) {
@@ -171,13 +170,11 @@ export async function submitLiveBid(auctionItemId, amount) {
 
     const interpretedBidderId = isNaN(Number(session.user.id)) ? session.user.id : Number(session.user.id);
 
-    const placedBid = await prisma.bid.create({
-      data: {
+    const [placedBid] = await db.insert(bids).values({
         auctionItemId: targetLotId,
         bidderId: interpretedBidderId,
         amount: incomingAmount,
-      }
-    });
+      }).returning();
 
     const broadcastPayload = {
       id: placedBid.id,
@@ -209,30 +206,20 @@ export async function getAuctionItemDetails(auctionItemId) {
       return { success: false, error: "Invalid auction item ID." };
     }
 
-    const item = await prisma.auctionItem.findUnique({
-      where: { id: cleanId },
-      include: {
-        asset: {
-          include: {
-            createdBy: {
-              select: { id: true, name: true, email: true }
-            }
-          }
-        },
+    const item = await db.query.auctionItems.findFirst({
+      where: eq(auctionItems.id, cleanId),
+      with: {
+        asset: { with: { createdBy: { columns: { id: true, name: true, email: true } } } },
         images: true,
         bids: {
-          orderBy: { amount: "desc" },
-          include: {
-            bidder: {
-              select: { id: true, name: true }
-            }
-          }
+          orderBy: [desc(bids.amount)],
+          with: { bidder: { columns: { id: true, name: true } } },
         },
         registrations: {
-          where: { status: "APPROVED" },
-          select: { id: true }
-        }
-      }
+          where: (registration, { eq }) => eq(registration.status, "APPROVED"),
+          columns: { id: true },
+        },
+      },
     });
 
     if (!item) {
@@ -298,13 +285,13 @@ export async function getActiveLiveAuctions() {
       return { success: false, items: [], error: "Authentication verification rejected." };
     }
 
-    const activeItems = await prisma.auctionItem.findMany({
-      where: { status: "ACTIVE" },
-      include: {
+    const activeItems = await db.query.auctionItems.findMany({
+      where: eq(auctionItems.status, "ACTIVE"),
+      with: {
         asset: true,
         images: {
-          where: { isPrimary: true },
-          take: 1
+          where: (image, { eq }) => eq(image.isPrimary, true),
+          limit: 1,
         }
       }
     });
@@ -342,13 +329,12 @@ export async function updateAuctionToLiveDirectly(itemId, computedRoomId) {
       return { success: false, error: "Unauthorized structural database update." };
     }
 
-    const record = await prisma.auctionItem.update({
-      where: { id: Number(itemId) },
-      data: { 
+    const [record] = await db.update(auctionItems).set({
         status: "ACTIVE", 
-        liveRoomId: computedRoomId 
-      },
-    });
+        liveRoomId: computedRoomId,
+      }).where(eq(auctionItems.id, Number(itemId))).returning();
+
+    if (!record) return { success: false, error: "Auction item not found." };
 
     return { success: true, data: JSON.parse(JSON.stringify(record)) };
   } catch (err) {
@@ -367,12 +353,10 @@ export async function closeLiveAuctionDirectly(itemId) {
       return { success: false, error: "Unauthorized structural database update." };
     }
 
-    const record = await prisma.auctionItem.update({
-      where: { id: Number(itemId) },
-      data: { 
-        status: "CLOSED" 
-      },
-    });
+    const [record] = await db.update(auctionItems).set({ status: "CLOSED" })
+      .where(eq(auctionItems.id, Number(itemId))).returning();
+
+    if (!record) return { success: false, error: "Auction item not found." };
 
     return { success: true, data: JSON.parse(JSON.stringify(record)) };
   } catch (err) {

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { payments } from "@/lib/db/schema";
+import { desc, eq } from "drizzle-orm";
 
 export async function GET() {
   try {
@@ -9,13 +11,12 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const payments = await prisma.payment.findMany({
-      where: { userId: parseInt(session.user.id) },
-      orderBy: { createdAt: "desc" },
-      take: 50,
-    });
+    const userPayments = await db.select().from(payments)
+      .where(eq(payments.userId, parseInt(session.user.id)))
+      .orderBy(desc(payments.createdAt))
+      .limit(50);
 
-    return NextResponse.json({ payments });
+    return NextResponse.json({ payments: userPayments });
   } catch (error) {
     console.error("[Payments GET]", error);
     return NextResponse.json({ error: "Server error" }, { status: 500 });

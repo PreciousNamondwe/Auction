@@ -1,7 +1,9 @@
 "use server";
 
 import { auth } from "../../auth";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { auctionAccessPayments, auctionItems, payments } from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 
 /**
  * 🎟 LIVE AUCTION ACCESS GATE
@@ -28,32 +30,30 @@ export async function getAuctionAccessStatus(auctionItemId) {
       return { success: false, error: "Invalid auction item ID." };
     }
 
-    const item = await prisma.auctionItem.findUnique({
-      where: { id: cleanId },
-      select: {
+    const item = await db.query.auctionItems.findFirst({
+      where: eq(auctionItems.id, cleanId),
+      columns: {
         id: true,
         status: true,
         biddingFee: true,
         depositAmount: true,
         liveRoomId: true,
         startingBid: true,
-        asset: { select: { title: true, location: true } },
       },
+      with: { asset: { columns: { title: true, location: true } } },
     });
 
     if (!item) {
       return { success: false, error: "Auction item not found." };
     }
 
-    const payments = await prisma.auctionAccessPayment.findMany({
-      where: {
-        userId: Number(session.user.id),
-        auctionItemId: cleanId,
-      },
-    });
+    const accessPayments = await db.select().from(auctionAccessPayments).where(and(
+      eq(auctionAccessPayments.userId, Number(session.user.id)),
+      eq(auctionAccessPayments.auctionItemId, cleanId),
+    ));
 
-    const biddingFeePayment = payments.find((p) => p.feeType === "BIDDING_FEE");
-    const depositPayment = payments.find((p) => p.feeType === "SECURITY_DEPOSIT");
+    const biddingFeePayment = accessPayments.find((p) => p.feeType === "BIDDING_FEE");
+    const depositPayment = accessPayments.find((p) => p.feeType === "SECURITY_DEPOSIT");
 
     const biddingFeePaid = biddingFeePayment?.status === "PAID";
     const depositPaid = depositPayment?.status === "PAID";
@@ -108,31 +108,24 @@ export async function startBiddingFeePayment(auctionItemId) {
       return { success: false, error: "Invalid auction item ID." };
     }
 
-    const item = await prisma.auctionItem.findUnique({
-      where: { id: cleanId },
-      select: { biddingFee: true },
+    const item = await db.query.auctionItems.findFirst({
+      where: eq(auctionItems.id, cleanId),
+      columns: { biddingFee: true },
     });
     if (!item) {
       return { success: false, error: "Auction item not found." };
     }
 
-    const record = await prisma.auctionAccessPayment.upsert({
-      where: {
-        userId_auctionItemId_feeType: {
-          userId: Number(session.user.id),
-          auctionItemId: cleanId,
-          feeType: "BIDDING_FEE",
-        },
-      },
-      create: {
+    const [record] = await db.insert(auctionAccessPayments).values({
         userId: Number(session.user.id),
         auctionItemId: cleanId,
         feeType: "BIDDING_FEE",
         amount: item.biddingFee,
         status: "PENDING",
-      },
-      update: { status: "PENDING" },
-    });
+      }).onConflictDoUpdate({
+        target: [auctionAccessPayments.userId, auctionAccessPayments.auctionItemId, auctionAccessPayments.feeType],
+        set: { status: "PENDING" },
+      }).returning();
 
     return { success: true, data: { id: record.id, amount: Number(record.amount) } };
   } catch (error) {
@@ -156,45 +149,34 @@ export async function startSecurityDepositPayment(auctionItemId) {
       return { success: false, error: "Invalid auction item ID." };
     }
 
-    const biddingFee = await prisma.auctionAccessPayment.findUnique({
-      where: {
-        userId_auctionItemId_feeType: {
-          userId: Number(session.user.id),
-          auctionItemId: cleanId,
-          feeType: "BIDDING_FEE",
-        },
-      },
-    });
+    const [biddingFee] = await db.select().from(auctionAccessPayments).where(and(
+      eq(auctionAccessPayments.userId, Number(session.user.id)),
+      eq(auctionAccessPayments.auctionItemId, cleanId),
+      eq(auctionAccessPayments.feeType, "BIDDING_FEE"),
+    )).limit(1);
 
     if (!biddingFee || biddingFee.status !== "PAID") {
       return { success: false, error: "You must complete the bidding fee payment first." };
     }
 
-    const item = await prisma.auctionItem.findUnique({
-      where: { id: cleanId },
-      select: { depositAmount: true },
+    const item = await db.query.auctionItems.findFirst({
+      where: eq(auctionItems.id, cleanId),
+      columns: { depositAmount: true },
     });
     if (!item) {
       return { success: false, error: "Auction item not found." };
     }
 
-    const record = await prisma.auctionAccessPayment.upsert({
-      where: {
-        userId_auctionItemId_feeType: {
-          userId: Number(session.user.id),
-          auctionItemId: cleanId,
-          feeType: "SECURITY_DEPOSIT",
-        },
-      },
-      create: {
+    const [record] = await db.insert(auctionAccessPayments).values({
         userId: Number(session.user.id),
         auctionItemId: cleanId,
         feeType: "SECURITY_DEPOSIT",
         amount: item.depositAmount,
         status: "PENDING",
-      },
-      update: { status: "PENDING" },
-    });
+      }).onConflictDoUpdate({
+        target: [auctionAccessPayments.userId, auctionAccessPayments.auctionItemId, auctionAccessPayments.feeType],
+        set: { status: "PENDING" },
+      }).returning();
 
     return { success: true, data: { id: record.id, amount: Number(record.amount) } };
   } catch (error) {
@@ -254,20 +236,19 @@ export async function confirmAuctionAccessPayment(auctionItemId, feeType, paymen
       effectiveStatus = "PENDING";
     }
 
-    const record = await prisma.auctionAccessPayment.update({
-      where: {
-        userId_auctionItemId_feeType: {
-          userId: Number(session.user.id),
-          auctionItemId: cleanId,
-          feeType: normalizedType,
-        },
-      },
-      data: {
+    const [record] = await db.update(auctionAccessPayments).set({
         status: effectiveStatus,
         paymentRef,
         paidAt: effectiveStatus === "PAID" ? new Date() : null,
-      },
-    });
+      }).where(and(
+        eq(auctionAccessPayments.userId, Number(session.user.id)),
+        eq(auctionAccessPayments.auctionItemId, cleanId),
+        eq(auctionAccessPayments.feeType, normalizedType),
+      )).returning();
+
+    if (!record) {
+      return { success: false, error: "Access payment record not found." };
+    }
 
     if (effectiveStatus === "PENDING") {
       return { success: true, data: { status: record.status, feeType: record.feeType, needsVerification: true } };
@@ -275,17 +256,16 @@ export async function confirmAuctionAccessPayment(auctionItemId, feeType, paymen
 
     if (effectiveStatus === "PAID") {
       // Keep the general payment ledger in sync for the payments dashboard.
-      await prisma.payment.upsert({
-        where: { reference: paymentRef },
-        create: {
+      await db.insert(payments).values({
           userId: Number(session.user.id),
           amount: record.amount,
           reference: paymentRef,
           gatewayStatus: "completed",
           purpose: normalizedType,
-        },
-        update: { gatewayStatus: "completed", purpose: normalizedType },
-      });
+        }).onConflictDoUpdate({
+          target: payments.reference,
+          set: { gatewayStatus: "completed", purpose: normalizedType },
+        });
     }
 
     return { success: true, data: { status: record.status, feeType: record.feeType } };

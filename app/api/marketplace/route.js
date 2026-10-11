@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { assets, bids, dailySales } from "@/lib/db/schema";
+import { and, desc, eq, ilike, or } from "drizzle-orm";
 
 /**
  * GET /api/marketplace?tab=daily-sales|properties&q=search+term
@@ -23,40 +25,43 @@ export async function GET(request) {
     const q = (searchParams.get("q") || "").trim();
     const locationFilter = (searchParams.get("location") || "").trim();
 
-    const baseWhere = { isSold: false };
-    if (q) {
-      baseWhere.OR = [
-        { title: { contains: q } },
-        { description: { contains: q } },
-        { category: { contains: q } },
-        { location: { contains: q } },
-      ];
-    }
+    const searchFilter = q ? or(
+      ilike(assets.title, `%${q}%`),
+      ilike(assets.description, `%${q}%`),
+      ilike(assets.category, `%${q}%`),
+      ilike(assets.location, `%${q}%`),
+    ) : undefined;
 
     // ── DAILY SALES: regular sold commodities (goods) across all auctioneers ──
     if (tab === "daily-sales") {
-      const dailySales = await prisma.dailySale.findMany({
-        where: {
-          isAvailable: true,
+      const dailySaleRows = await db.query.dailySales.findMany({
+        where: eq(dailySales.isAvailable, true),
+        with: {
           asset: {
-            ...baseWhere,
-            salesType: "DAILY_SALE",
-          },
-        },
-        include: {
-          asset: {
-            include: {
-              createdBy: { select: { id: true, name: true, email: true } },
+            with: {
+              createdBy: { columns: { id: true, name: true, email: true } },
               auctionItems: {
-                include: { images: { where: { isPrimary: true }, take: 1 } },
+                with: { images: { where: (image, { eq }) => eq(image.isPrimary, true), limit: 1 } },
               },
             },
           },
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: [desc(dailySales.createdAt)],
       });
 
-      const items = dailySales.map((sale) => {
+      const items = dailySaleRows
+        .filter((sale) => sale.asset && !sale.asset.isSold && sale.asset.salesType === "DAILY_SALE")
+        .filter((sale) => {
+          if (!searchFilter) return true;
+          const haystack = [
+            sale.asset.title,
+            sale.asset.description,
+            sale.asset.category,
+            sale.asset.location,
+          ].join(" ").toLowerCase();
+          return haystack.includes(q.toLowerCase());
+        })
+        .map((sale) => {
           const primaryImage =
             sale.asset.auctionItems?.flatMap((ai) => ai.images || [])[0]?.url || null;
           return {
@@ -80,27 +85,23 @@ export async function GET(request) {
     }
 
     // ── PROPERTIES: land & buildings, searchable by location ──
-    const propertiesWhere = {
-      ...baseWhere,
-      salesType: "PROPERTY",
-    };
-
-    if (locationFilter) {
-      propertiesWhere.location = { contains: locationFilter };
-    }
-
-    const properties = await prisma.asset.findMany({
-      where: propertiesWhere,
-      include: {
-        createdBy: { select: { id: true, name: true, email: true } },
+    const properties = await db.query.assets.findMany({
+      where: and(
+        eq(assets.isSold, false),
+        eq(assets.salesType, "PROPERTY"),
+        ...(searchFilter ? [searchFilter] : []),
+        ...(locationFilter ? [ilike(assets.location, `%${locationFilter}%`)] : []),
+      ),
+      with: {
+        createdBy: { columns: { id: true, name: true, email: true } },
         auctionItems: {
-          include: {
-            images: { where: { isPrimary: true }, take: 1 },
-            bids: { orderBy: { amount: "desc" }, take: 1 },
+          with: {
+            images: { where: (image, { eq }) => eq(image.isPrimary, true), limit: 1 },
+            bids: { orderBy: [desc(bids.amount)], limit: 1 },
           },
         },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: [desc(assets.createdAt)],
     });
 
     const items = properties.map((asset) => {

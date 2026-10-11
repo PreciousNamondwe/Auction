@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { auctionItems, auctionRegistrations, bids, payments } from "@/lib/db/schema";
+import { and, desc, eq, gt, inArray, asc } from "drizzle-orm";
 
 /**
  * GET /api/dashboard/bidder
@@ -24,33 +26,38 @@ export async function GET(request) {
     const userId = Number(session.user.id);
 
     // ── 2. FETCH ALL BIDS WITH RELATIONS ─────────────────────────────
-    const allBids = await prisma.bid.findMany({
-      where: { bidderId: userId },
-      include: {
+    const allBids = await db.query.bids.findMany({
+      where: eq(bids.bidderId, userId),
+      with: {
         auctionItem: {
-          include: {
-            asset: {
-              select: { id: true, title: true, category: true, location: true },
-            },
+          with: {
+            asset: { columns: { id: true, title: true, category: true, location: true } },
             images: {
-              where: { isPrimary: true },
-              take: 1,
-              select: { url: true },
+              where: (image, { eq }) => eq(image.isPrimary, true),
+              limit: 1,
             },
           },
         },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: [desc(bids.createdAt)],
     });
+
+    const auctionItemIds = [...new Set(allBids.map((bid) => bid.auctionItemId))];
+    const [allCurrentBids] = auctionItemIds.length
+      ? await Promise.all([
+          db.select({ auctionItemId: bids.auctionItemId, amount: bids.amount, bidderId: bids.bidderId })
+            .from(bids).where(inArray(bids.auctionItemId, auctionItemIds)).orderBy(desc(bids.amount)),
+        ])
+      : [[]];
+    const highestBids = new Map();
+    for (const bid of allCurrentBids) {
+      if (!highestBids.has(bid.auctionItemId)) highestBids.set(bid.auctionItemId, bid);
+    }
 
     // ── 3. ENRICH BIDS WITH COMPUTED STATUS ──────────────────────────
     const enrichedBids = await Promise.all(
-      allBids.map(async (bid) => {
-        const highestBid = await prisma.bid.findFirst({
-          where: { auctionItemId: bid.auctionItemId },
-          orderBy: { amount: "desc" },
-          select: { amount: true, bidderId: true },
-        });
+      allBids.map((bid) => {
+        const highestBid = highestBids.get(bid.auctionItemId);
 
         const now = new Date();
         const endTime = new Date(bid.auctionItem.endTime);
@@ -61,7 +68,7 @@ export async function GET(request) {
           status = highestBid?.bidderId === userId ? "WON" : "LOST";
         } else if (highestBid?.bidderId === userId) {
           status = "WINNING";
-        } else if (highestBid && highestBid.amount > bid.amount) {
+        } else if (highestBid && Number(highestBid.amount) > Number(bid.amount)) {
           status = "OUTBID";
         } else {
           status = "ACTIVE";
@@ -86,24 +93,21 @@ export async function GET(request) {
     );
 
     // ── 4. FETCH REGISTRATIONS ─────────────────────────────────────────
-    const registrations = await prisma.auctionRegistration.findMany({
-      where: { userId },
-      include: {
+    const registrations = await db.query.auctionRegistrations.findMany({
+      where: eq(auctionRegistrations.userId, userId),
+      with: {
         auctionItem: {
-          include: {
-            asset: {
-              select: { id: true, title: true, category: true },
-            },
+          with: {
+            asset: { columns: { id: true, title: true, category: true } },
             images: {
-              where: { isPrimary: true },
-              take: 1,
-              select: { url: true },
+              where: (image, { eq }) => eq(image.isPrimary, true),
+              limit: 1,
             },
           },
         },
       },
-      orderBy: { createdAt: "desc" },
-      take: 5,
+      orderBy: [desc(auctionRegistrations.createdAt)],
+      limit: 5,
     });
 
     const enrichedRegistrations = registrations.map((reg) => ({
@@ -120,31 +124,24 @@ export async function GET(request) {
     }));
 
     // ── 5. FETCH PAYMENTS ────────────────────────────────────────────
-    const payments = await prisma.payment.findMany({
-      where: { userId },
-      orderBy: { createdAt: "desc" },
-      take: 5,
-    });
+    const recentPayments = await db.select().from(payments).where(eq(payments.userId, userId))
+      .orderBy(desc(payments.createdAt)).limit(5);
 
     // ── 6. FETCH UPCOMING AUCTIONS ───────────────────────────────────
     const now = new Date();
-    const upcomingAuctions = await prisma.auctionItem.findMany({
-      where: {
-        status: "UPCOMING",
-        startTime: { gt: now },
-      },
-      include: {
+    const upcomingAuctions = await db.query.auctionItems.findMany({
+      where: and(eq(auctionItems.status, "UPCOMING"), gt(auctionItems.startTime, now)),
+      with: {
         asset: {
-          select: { id: true, title: true, category: true, location: true },
+          columns: { id: true, title: true, category: true, location: true },
         },
         images: {
-          where: { isPrimary: true },
-          take: 1,
-          select: { url: true },
+          where: (image, { eq }) => eq(image.isPrimary, true),
+          limit: 1,
         },
       },
-      orderBy: { startTime: "asc" },
-      take: 6,
+      orderBy: [asc(auctionItems.startTime)],
+      limit: 6,
     });
 
     // ── 7. COMPUTE STATS ───────────────────────────────────────────────
@@ -152,9 +149,9 @@ export async function GET(request) {
     const winningBids = enrichedBids.filter((b) => b.status === "WINNING");
     const outbidCount = enrichedBids.filter((b) => b.status === "OUTBID").length;
     const auctionsWon = enrichedBids.filter((b) => b.status === "WON").length;
-    const totalSpent = payments.reduce((sum, p) => sum + Number(p.amount), 0);
-    const totalPayments = payments.length;
-    const successfulPayments = payments.filter(
+    const totalSpent = recentPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+    const totalPayments = recentPayments.length;
+    const successfulPayments = recentPayments.filter(
       (p) => p.gatewayStatus === "SUCCESS" || p.gatewayStatus === "COMPLETED"
     ).length;
     const totalRegistrations = registrations.length;
@@ -183,7 +180,7 @@ export async function GET(request) {
       winningBids: winningBids.slice(0, 4),
       upcomingAuctions,
       registeredAuctions: enrichedRegistrations,
-      recentPayments: payments,
+      recentPayments,
     };
 
     return NextResponse.json({

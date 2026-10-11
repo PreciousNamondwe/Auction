@@ -1,6 +1,8 @@
 import { auth } from "../../auth";
 import { redirect } from "next/navigation";
-import { prisma } from "@/lib/prisma"; 
+import { db } from "@/lib/db";
+import { auctionItems } from "@/lib/db/schema";
+import { desc } from "drizzle-orm";
 import DashboardLayoutFrame from "@/components/dashboard/DashboardLayoutFrame";
 
 export default async function DashboardPage() {
@@ -21,9 +23,9 @@ export default async function DashboardPage() {
   let serializedAuctionItems = [];
   
   if (isAuctioneer) {
-    const rawAuctionItems = await prisma.auctionItem.findMany({
-      include: { asset: true },
-      orderBy: { createdAt: "desc" },
+    const rawAuctionItems = await db.query.auctionItems.findMany({
+      with: { asset: true },
+      orderBy: [desc(auctionItems.createdAt)],
     });
 
     serializedAuctionItems = rawAuctionItems.map((item) => ({

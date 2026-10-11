@@ -1,11 +1,11 @@
 @import "tailwindcss";
 :root {
-  --color-primary: #A5EC60;    /* Bright Lime Green */
-  --color-secondary: #419310;  /* Vibrant Green */
-  --color-accent: #1C621B;     /* Deep Forest Green */
+  --color-primary: #5cbad1;    /* Bright Lime Green */
+  --color-secondary: #104d93;  /* Vibrant Green */
+  --color-accent: #aaccc6;     /* Deep Forest Green */
   --color-muted: #487070;      /* Slate Teal */
   --color-card: #18333D;       /* Dark Navy */
-  --color-bg: #0B1E26;         /* Near Black */
+  --color-bg: #ffffff;         /* Near Black */
   --color-text: #ffffff;       /* White text */
   --color-border: rgba(72, 112, 112, 0.2);
   --color-input: rgba(24, 51, 61, 0.6);

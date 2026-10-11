@@ -3,7 +3,9 @@
 import { auth } from "../../auth";
 import fs from "fs/promises";
 import path from "path";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { assetImages, assets, auctionItems, dailySales } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 
 /**
  * 🛒 DAILY SALES LISTING ENGINE (auctioneer side)
@@ -63,46 +65,42 @@ export async function createDailySaleListing(formData) {
       return { success: false, error: "Please attach a primary display image photograph." };
     }
 
-    const result = await prisma.$transaction(async (tx) => {
-      const newAsset = await tx.asset.create({
-        data: {
-          title,
-          description,
-          location,
-          category: category || "OTHER",
-          salesType: "DAILY_SALE",
-          salePrice: price,
-          attributes: formattedAttributes,
-          documentUrl: documentUrl || null,
-          createdById: Number(session.user.id),
-        },
-      });
+    const result = await db.transaction(async (tx) => {
+      const [newAsset] = await tx.insert(assets).values({
+        title,
+        description,
+        location,
+        category: category || "OTHER",
+        salesType: "DAILY_SALE",
+        salePrice: price,
+        attributes: formattedAttributes,
+        documentUrl: documentUrl || null,
+        createdById: Number(session.user.id),
+      }).returning();
 
-      const dailySale = await tx.dailySale.create({
-        data: {
-          assetId: newAsset.id,
-          price,
-          stockCount: isNaN(stockCount) ? 1 : Math.max(1, stockCount),
-          isAvailable: true,
-        },
-      });
+      const [dailySale] = await tx.insert(dailySales).values({
+        assetId: newAsset.id,
+        price,
+        stockCount: isNaN(stockCount) ? 1 : Math.max(1, stockCount),
+        isAvailable: true,
+      }).returning();
 
       if (calculatedImageUrl) {
         // Daily sales keep their photo on a lightweight auction item shell
         // so the existing image pipeline renders them everywhere.
-        await tx.auctionItem.create({
-          data: {
-            assetId: newAsset.id,
-            startingBid: price,
-            reservePrice: price,
-            depositAmount: 0,
-            biddingFee: 0,
-            endTime: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
-            status: "CLOSED",
-            images: {
-              create: { url: calculatedImageUrl, isPrimary: true },
-            },
-          },
+        const [auctionItem] = await tx.insert(auctionItems).values({
+          assetId: newAsset.id,
+          startingBid: price,
+          reservePrice: price,
+          depositAmount: 0,
+          biddingFee: 0,
+          endTime: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+          status: "CLOSED",
+        }).returning({ id: auctionItems.id });
+        await tx.insert(assetImages).values({
+          auctionItemId: auctionItem.id,
+          url: calculatedImageUrl,
+          isPrimary: true,
         });
       }
 
@@ -132,10 +130,10 @@ export async function toggleDailySaleAvailability(dailySaleId, isAvailable) {
       return { success: false, error: "Unauthorized." };
     }
 
-    const updated = await prisma.dailySale.update({
-      where: { id: Number(dailySaleId) },
-      data: { isAvailable: Boolean(isAvailable) },
-    });
+    const [updated] = await db.update(dailySales)
+      .set({ isAvailable: Boolean(isAvailable) })
+      .where(eq(dailySales.id, Number(dailySaleId)))
+      .returning({ id: dailySales.id, isAvailable: dailySales.isAvailable });
 
     return { success: true, data: { id: updated.id, isAvailable: updated.isAvailable } };
   } catch (error) {

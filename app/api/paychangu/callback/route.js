@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { payments } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { createHmac } from "crypto";
+import { sendPaymentReceipt } from "@/lib/paymentReceipts";
 
 const WEBHOOK_SECRET = process.env.PAYCHANGU_SECRET_KEY; // Same as API key
 
@@ -36,11 +39,10 @@ export async function POST(request) {
     }
 
     // ── 3. Idempotency ──
-    const existing = await prisma.payment.findUnique({
-      where: { reference: tx_ref },
-    });
+    const [existing] = await db.select().from(payments).where(eq(payments.reference, tx_ref)).limit(1);
 
     if (existing?.gatewayStatus === "completed") {
+      await sendPaymentReceipt(tx_ref);
       return NextResponse.json({ received: true, alreadyProcessed: true });
     }
 
@@ -53,23 +55,19 @@ export async function POST(request) {
         : status || "pending";
 
     // ── 5. Update DB ──
-    await prisma.payment.update({
-      where: { reference: tx_ref },
-      data: {
+    await db.update(payments).set({
         gatewayStatus: mappedStatus,
         amount: amount ? parseFloat(amount) : existing?.amount,
-      },
-    });
+      }).where(eq(payments.reference, tx_ref));
 
     if (mappedStatus === "completed") {
       console.log("[PayChangu] Payment completed:", tx_ref);
-      // TODO: business logic (approve registration, credit wallet, etc.)
+      await sendPaymentReceipt(tx_ref);
     }
 
     return NextResponse.json({ received: true, status: mappedStatus });
   } catch (error) {
     console.error("[PayChangu Webhook Error]", error);
-    // Always return 200 so PayChangu doesn't retry on unrecoverable errors
-    return NextResponse.json({ received: true, error: error.message });
+    return NextResponse.json({ received: false, error: "Webhook processing failed" }, { status: 500 });
   }
 }

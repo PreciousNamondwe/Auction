@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { assets, auctionItems, bids, dailySales } from "@/lib/db/schema";
+import { desc } from "drizzle-orm";
 
 /**
  * GET /api/listings
@@ -22,61 +24,64 @@ export async function GET() {
 
     const userId = Number(session.user.id);
 
-    const dailySales = await prisma.dailySale.findMany({
-      where: { asset: { createdById: userId } },
-      include: {
+    const dailySaleRows = await db.query.dailySales.findMany({
+      where: (dailySale, { eq }) => eq(dailySale.isAvailable, true),
+      with: {
         asset: {
-          include: {
+          with: {
             auctionItems: {
-              include: { images: { where: { isPrimary: true }, take: 1 } },
+              with: { images: { where: (image, { eq }) => eq(image.isPrimary, true), limit: 1 } },
             },
           },
         },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: [desc(dailySales.createdAt)],
     });
 
-    const properties = await prisma.auctionItem.findMany({
-      where: { asset: { createdById: userId, salesType: "PROPERTY" } },
-      include: {
+    const properties = await db.query.auctionItems.findMany({
+      with: {
         asset: true,
-        images: { where: { isPrimary: true }, take: 1 },
-        bids: { orderBy: { amount: "desc" }, take: 1 },
+        images: { where: (image, { eq }) => eq(image.isPrimary, true), limit: 1 },
+        bids: { orderBy: [desc(bids.amount)], limit: 1 },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: [desc(auctionItems.createdAt)],
     });
 
     return NextResponse.json({
       success: true,
-      dailySales: dailySales.map((sale) => ({
-        id: sale.id,
-        assetId: sale.asset.id,
-        title: sale.asset.title,
-        description: sale.asset.description,
-        category: sale.asset.category,
-        location: sale.asset.location,
-        price: Number(sale.price),
-        stockCount: sale.stockCount,
-        isAvailable: sale.isAvailable,
-        imageUrl: sale.asset.auctionItems?.[0]?.images?.[0]?.url || null,
-        createdAt: sale.createdAt.toISOString(),
-      })),
-      properties: properties.map((item) => ({
-        id: item.id,
-        assetId: item.assetId,
-        title: item.asset.title,
-        description: item.asset.description,
-        category: item.asset.category,
-        location: item.asset.location,
-        startingBid: Number(item.startingBid),
-        reservePrice: Number(item.reservePrice),
-        depositAmount: Number(item.depositAmount),
-        biddingFee: Number(item.biddingFee),
-        status: item.status,
-        currentBid: item.bids[0] ? Number(item.bids[0].amount) : null,
-        imageUrl: item.images[0]?.url || null,
-        createdAt: item.createdAt.toISOString(),
-      })),
+      dailySales: dailySaleRows
+        .filter((sale) => sale.asset?.createdById === userId)
+        .map((sale) => ({
+          id: sale.id,
+          assetId: sale.asset.id,
+          title: sale.asset.title,
+          description: sale.asset.description,
+          category: sale.asset.category,
+          location: sale.asset.location,
+          price: Number(sale.price),
+          stockCount: sale.stockCount,
+          isAvailable: sale.isAvailable,
+          imageUrl: sale.asset.auctionItems?.[0]?.images?.[0]?.url || null,
+          createdAt: sale.createdAt.toISOString(),
+        })),
+      properties: properties
+        .filter((item) => item.asset?.createdById === userId)
+        .map((item) => ({
+          id: item.id,
+          assetId: item.assetId,
+          title: item.asset.title,
+          description: item.asset.description,
+          category: item.asset.category,
+          location: item.asset.location,
+          startingBid: Number(item.startingBid),
+          reservePrice: Number(item.reservePrice),
+          depositAmount: Number(item.depositAmount),
+          biddingFee: Number(item.biddingFee),
+          status: item.status,
+          currentBid: item.bids[0] ? Number(item.bids[0].amount) : null,
+          imageUrl: item.images[0]?.url || null,
+          createdAt: item.createdAt.toISOString(),
+        })),
     });
   } catch (error) {
     console.error("[Listings API]", error);

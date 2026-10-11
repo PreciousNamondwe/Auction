@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { payments } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import { sendPaymentReceipt } from "@/lib/paymentReceipts";
 
 export async function GET(request) {
   try {
@@ -17,9 +20,7 @@ export async function GET(request) {
     }
 
     // Verify ownership
-    const payment = await prisma.payment.findUnique({
-      where: { reference: tx_ref },
-    });
+    const [payment] = await db.select().from(payments).where(eq(payments.reference, tx_ref)).limit(1);
 
     if (!payment || payment.userId !== parseInt(session.user.id)) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -47,15 +48,14 @@ export async function GET(request) {
         : status || "pending";
 
     if (mappedStatus !== payment.gatewayStatus) {
-      await prisma.payment.update({
-        where: { reference: tx_ref },
-        data: { gatewayStatus: mappedStatus },
-      });
+      await db.update(payments).set({ gatewayStatus: mappedStatus }).where(eq(payments.reference, tx_ref));
     }
+    const receiptEmailed = mappedStatus === "completed" ? await sendPaymentReceipt(tx_ref) : false;
 
     return NextResponse.json({
       tx_ref,
       status: mappedStatus,
+      receiptEmailed,
       data: verifyData.data,
     });
   } catch (error) {

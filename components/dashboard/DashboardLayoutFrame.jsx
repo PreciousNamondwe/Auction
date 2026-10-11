@@ -29,9 +29,8 @@ import BidderLiveConsole from "@/components/dashboard/BidderLiveConsole";
 import AuctioneerManageAssets from "@/components/dashboard/AuctioneerManageAssets";
 import AuctioneerAddListing from "@/components/dashboard/AuctioneerAddListing";
 import BidderMarketplace from "@/components/dashboard/BidderMarketplace";
+import PaymentHistory from "@/components/dashboard/PaymentHistory";
 import Mybids from "./Mybids"
-import Payment from "./Payment";
-import AuctioneerPayment from "./AuctioneerPayment";
 
 export default function DashboardLayoutFrame({ user, serializedAuctionItems, isAuctioneer, forceTab = null, addListingInitialMode = "property" }) {
   const searchParams = useSearchParams();
@@ -73,7 +72,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
       "my-bids": "My Bids",
       "manage-listings": "Manage Listings",
       "add-listing": "Add Listing",
-      "payments": "Payments & Deposits",
+      "payments": "Payments & Receipts",
       "reports": "Reports",
       "settings": "Settings"
     };
@@ -87,7 +86,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
     { id: "properties", icon: Home, label: "Properties", show: !isAuctioneer },
     { id: "my-bids", icon: Gavel, label: "My Bids", show: !isAuctioneer },
     { id: "manage-listings", icon: FolderGit, label: "Manage Listings", show: isAuctioneer },
-    { id: "payments", icon: Wallet, label: "Payments & Deposits", show: true },
+    { id: "payments", icon: Wallet, label: "Payments & Receipts", show: true },
     { id: "reports", icon: BarChart3, label: "Reports", show: isAuctioneer },
     { id: "settings", icon: Settings, label: "Settings", show: true },
   ];
@@ -356,7 +355,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
 
             {/* Payments & Deposits */}
             {activeTab === "payments" && (
-              isAuctioneer ? <AuctioneerPayment /> : <Payment />
+              <PaymentHistory />
             )}
 
             {/* Settings */}

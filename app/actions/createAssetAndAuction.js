@@ -3,9 +3,8 @@
 import { auth } from "../../auth";
 import fs from "fs/promises";
 import path from "path";
-
-// 🎯 FIX: Import your globally persistent singleton instance to stop connection corruption 
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { assetImages, assets, auctionItems } from "@/lib/db/schema";
 
 export async function createAssetAndAuction(formData) {
   try {
@@ -56,37 +55,32 @@ export async function createAssetAndAuction(formData) {
       throw new Error("No image file captured.");
     }
 
-    const result = await prisma.$transaction(async (tx) => {
-      const newAsset = await tx.asset.create({
-        data: {
-          title,
-          description,
-          location,
-          category,
-          salesType: "PROPERTY",
-          attributes: formattedAttributes,
-          documentUrl: documentUrl || null,
-          createdById: Number(session.user.id),
-        }
-      });
+    const result = await db.transaction(async (tx) => {
+      const [newAsset] = await tx.insert(assets).values({
+        title,
+        description,
+        location,
+        category,
+        salesType: "PROPERTY",
+        attributes: formattedAttributes,
+        documentUrl: documentUrl || null,
+        createdById: Number(session.user.id),
+      }).returning();
 
-      const newAuctionItem = await tx.auctionItem.create({
-        data: {
-          assetId: newAsset.id,
-          startingBid: parseFloat(startingBid),
-          reservePrice: parseFloat(reservePrice),
-          depositAmount: parseFloat(depositAmount),
-          biddingFee: biddingFee ? parseFloat(biddingFee) : 0,
-          endTime: new Date(Date.now() + 4 * 60 * 60 * 1000), 
-          status: "UPCOMING",
-          
-          images: {
-            create: {
-              url: calculatedImageUrl,
-              isPrimary: true
-            }
-          }
-        }
+      const [newAuctionItem] = await tx.insert(auctionItems).values({
+        assetId: newAsset.id,
+        startingBid: parseFloat(startingBid),
+        reservePrice: parseFloat(reservePrice),
+        depositAmount: parseFloat(depositAmount),
+        biddingFee: biddingFee ? parseFloat(biddingFee) : 0,
+        endTime: new Date(Date.now() + 4 * 60 * 60 * 1000),
+        status: "UPCOMING",
+      }).returning();
+
+      await tx.insert(assetImages).values({
+        auctionItemId: newAuctionItem.id,
+        url: calculatedImageUrl,
+        isPrimary: true,
       });
 
       return { asset: newAsset, auctionItem: newAuctionItem };

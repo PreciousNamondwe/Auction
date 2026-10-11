@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { bids } from "@/lib/db/schema";
+import { count, desc, eq, inArray } from "drizzle-orm";
 
 /**
  * GET /api/bids/my-bids
@@ -37,47 +39,41 @@ export async function GET(request) {
     const skip = (page - 1) * limit;
 
     // ── 3. FETCH BIDS WITH RELATIONS ─────────────────────────────────
-    const bids = await prisma.bid.findMany({
-      where: {
-        bidderId: userId,
-      },
-      include: {
+    const userBids = await db.query.bids.findMany({
+      where: eq(bids.bidderId, userId),
+      with: {
         auctionItem: {
-          include: {
-            asset: {
-              select: {
-                id: true,
-                title: true,
-                category: true,
-                description: true,
-                location: true,
-              },
-            },
+          with: {
+            asset: { columns: { id: true, title: true, category: true, description: true, location: true } },
             images: {
-              where: { isPrimary: true },
-              take: 1,
-              select: { url: true },
-            },
-            _count: {
-              select: { bids: true },
+              where: (image, { eq }) => eq(image.isPrimary, true),
+              limit: 1,
             },
           },
         },
       },
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy: [desc(bids.createdAt)],
     });
+
+    const auctionItemIds = [...new Set(userBids.map((bid) => bid.auctionItemId))];
+    const [allCurrentBids, bidCounts] = auctionItemIds.length
+      ? await Promise.all([
+          db.select({ auctionItemId: bids.auctionItemId, amount: bids.amount, bidderId: bids.bidderId })
+            .from(bids).where(inArray(bids.auctionItemId, auctionItemIds)).orderBy(desc(bids.amount)),
+          db.select({ auctionItemId: bids.auctionItemId, total: count() }).from(bids)
+            .where(inArray(bids.auctionItemId, auctionItemIds)).groupBy(bids.auctionItemId),
+        ])
+      : [[], []];
+    const highestBids = new Map();
+    for (const bid of allCurrentBids) {
+      if (!highestBids.has(bid.auctionItemId)) highestBids.set(bid.auctionItemId, bid);
+    }
+    const bidCountByItem = new Map(bidCounts.map((row) => [row.auctionItemId, row.total]));
 
     // ── 4. ENRICH WITH COMPUTED STATUS & FILTER ───────────────────────
     const enrichedBids = await Promise.all(
-      bids.map(async (bid) => {
-        // Get the current highest bid for this auction item
-        const highestBid = await prisma.bid.findFirst({
-          where: { auctionItemId: bid.auctionItemId },
-          orderBy: { amount: "desc" },
-          select: { amount: true, bidderId: true },
-        });
+      userBids.map((bid) => {
+        const highestBid = highestBids.get(bid.auctionItemId);
 
         const now = new Date();
         const endTime = new Date(bid.auctionItem.endTime);
@@ -89,7 +85,7 @@ export async function GET(request) {
           status = highestBid?.bidderId === userId ? "WON" : "LOST";
         } else if (highestBid?.bidderId === userId) {
           status = "WINNING";
-        } else if (highestBid && highestBid.amount > bid.amount) {
+        } else if (highestBid && Number(highestBid.amount) > Number(bid.amount)) {
           status = "OUTBID";
         } else {
           status = "ACTIVE";
@@ -111,7 +107,7 @@ export async function GET(request) {
             status: bid.auctionItem.status,
             liveRoomId: bid.auctionItem.liveRoomId,
             currentPrice: highestBid?.amount || bid.amount,
-            totalBids: bid.auctionItem._count.bids,
+            totalBids: bidCountByItem.get(bid.auctionItemId) || 0,
             asset: bid.auctionItem.asset,
             images: bid.auctionItem.images,
           },
