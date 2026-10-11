@@ -4,6 +4,7 @@ import { auctionAccessPayments, payments } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { createHmac } from "crypto";
 import { sendPaymentReceipt } from "@/lib/paymentReceipts";
+import { syncListingSalePayment } from "@/lib/paymentSales";
 
 const WEBHOOK_SECRET = process.env.PAYCHANGU_SECRET_KEY; // Same as API key
 
@@ -49,6 +50,7 @@ export async function POST(request) {
       return NextResponse.json({ error: "Unknown payment reference" }, { status: 404 });
     }
     if (existing.gatewayStatus === "completed") {
+      await syncListingSalePayment(tx_ref, "completed");
       await sendPaymentReceipt(tx_ref);
       return NextResponse.json({ received: true, alreadyProcessed: true });
     }
@@ -79,6 +81,7 @@ export async function POST(request) {
         eq(auctionAccessPayments.userId, existing.userId),
       ));
     });
+    await syncListingSalePayment(tx_ref, mappedStatus);
 
     if (mappedStatus === "completed") {
       console.log("[PayChangu] Payment completed:", tx_ref);

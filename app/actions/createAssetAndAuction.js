@@ -15,13 +15,44 @@ export async function createAssetAndAuction(formData) {
 
     const title = formData.get("title");
     const description = formData.get("description");
-    const location = formData.get("location");
+    const clientName = formData.get("clientName");
     const category = formData.get("category");
     const documentUrl = formData.get("documentUrl");
+    const listingType = formData.get("listingType") || "AUCTION";
     const startingBid = formData.get("startingBid");
     const reservePrice = formData.get("reservePrice");
-    const depositAmount = formData.get("depositAmount");
-    const biddingFee = formData.get("biddingFee");
+    const entryFee = formData.get("entryFee");
+    const biddingDeposit = formData.get("biddingDeposit");
+    const askingPrice = Number(formData.get("askingPrice"));
+    const monthlyRent = Number(formData.get("monthlyRent"));
+    const rentDueDay = Number(formData.get("rentDueDay"));
+
+    if (session.user.role !== "AUCTIONEER" && session.user.role !== "ADMIN") {
+      throw new Error("Only auctioneers can create property listings.");
+    }
+    if (!title || !description || !clientName) {
+      throw new Error("Title, description, and client name are required.");
+    }
+    if (!["AUCTION", "SALE", "LEASE"].includes(listingType)) {
+      throw new Error("Invalid property listing type.");
+    }
+    if (listingType === "AUCTION" && (
+      !Number.isFinite(Number(startingBid)) || Number(startingBid) <= 0 ||
+      !Number.isFinite(Number(reservePrice)) || Number(reservePrice) <= 0 ||
+      !Number.isFinite(Number(entryFee)) || Number(entryFee) <= 0 ||
+      !Number.isFinite(Number(biddingDeposit)) || Number(biddingDeposit) <= 0
+    )) {
+      throw new Error("Enter valid auction prices and fees.");
+    }
+    if (listingType === "SALE" && (!Number.isFinite(askingPrice) || askingPrice <= 0)) {
+      throw new Error("Enter a valid asking price.");
+    }
+    if (listingType === "LEASE" && (
+      !Number.isFinite(monthlyRent) || monthlyRent <= 0 ||
+      !Number.isInteger(rentDueDay) || rentDueDay < 1 || rentDueDay > 28
+    )) {
+      throw new Error("Enter a valid monthly rent and due day (1–28).");
+    }
     
     const rawAttributes = formData.get("dynamicAttributes");
     const parsedAttributes = JSON.parse(rawAttributes || "[]");
@@ -59,22 +90,29 @@ export async function createAssetAndAuction(formData) {
       const [newAsset] = await tx.insert(assets).values({
         title,
         description,
-        location,
+        location: clientName,
+        clientName,
         category,
         salesType: "PROPERTY",
+        listingType,
+        salePrice: listingType === "SALE" ? String(askingPrice) : null,
+        monthlyRent: listingType === "LEASE" ? String(monthlyRent) : null,
+        rentDueDay: listingType === "LEASE" ? rentDueDay : null,
         attributes: formattedAttributes,
-        documentUrl: documentUrl || null,
+        documentUrl: listingType === "AUCTION" ? (documentUrl || null) : null,
         createdById: Number(session.user.id),
       }).returning();
 
+      const isAuction = listingType === "AUCTION";
+      const displayPrice = listingType === "SALE" ? askingPrice : monthlyRent;
       const [newAuctionItem] = await tx.insert(auctionItems).values({
         assetId: newAsset.id,
-        startingBid: parseFloat(startingBid),
-        reservePrice: parseFloat(reservePrice),
-        depositAmount: parseFloat(depositAmount),
-        biddingFee: biddingFee ? parseFloat(biddingFee) : 5000,
-        endTime: new Date(Date.now() + 4 * 60 * 60 * 1000),
-        status: "UPCOMING",
+        startingBid: isAuction ? Number(startingBid) : displayPrice,
+        reservePrice: isAuction ? Number(reservePrice) : displayPrice,
+        depositAmount: isAuction ? Number(entryFee) : 0,
+        biddingFee: isAuction ? Number(biddingDeposit) : 0,
+        endTime: new Date(Date.now() + (isAuction ? 4 * 60 * 60 * 1000 : 365 * 24 * 60 * 60 * 1000)),
+        status: isAuction ? "UPCOMING" : "CLOSED",
       }).returning();
 
       await tx.insert(assetImages).values({
@@ -99,6 +137,7 @@ export async function createAssetAndAuction(formData) {
         startingBid: Number(result.auctionItem.startingBid),
         reservePrice: Number(result.auctionItem.reservePrice),
         depositAmount: Number(result.auctionItem.depositAmount),
+        biddingFee: Number(result.auctionItem.biddingFee),
         // Coerce Date objects to explicit plain strings
         startTime: result.auctionItem.startTime.toISOString(),
         endTime: result.auctionItem.endTime.toISOString(),

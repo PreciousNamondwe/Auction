@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { auctionAccessPayments, payments } from "@/lib/db/schema";
+import { auctionAccessPayments, payments, sales } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 
 const PAYCHANGU_BASE = "https://api.paychangu.com";
@@ -28,7 +28,12 @@ export async function POST(request) {
       );
     }
 
-    const accessFeeType = ["BIDDING_FEE", "SECURITY_DEPOSIT"].includes(purpose) ? purpose : null;
+    const accessFeeType = ({
+      ENTRY_FEE: "ENTRY_FEE",
+      SECURITY_DEPOSIT: "ENTRY_FEE",
+      BIDDING_DEPOSIT: "BIDDING_DEPOSIT",
+      BIDDING_FEE: "BIDDING_DEPOSIT",
+    })[purpose] || null;
     if (accessFeeType) {
       const [accessPayment] = await db.select().from(auctionAccessPayments).where(and(
         eq(auctionAccessPayments.userId, Number(session.user.id)),
@@ -42,6 +47,18 @@ export async function POST(request) {
         Number(accessPayment.amount) !== requestedAmount
       ) {
         return NextResponse.json({ error: "Auction fee does not match a pending access payment" }, { status: 400 });
+      }
+    }
+
+    if (["DAILY_SALE_PURCHASE", "PROPERTY_PURCHASE"].includes(purpose)) {
+      const [purchase] = await db.select().from(sales).where(and(
+        eq(sales.buyerId, Number(session.user.id)),
+        eq(sales.paymentRef, tx_ref),
+        eq(sales.kind, purpose),
+        eq(sales.status, "PENDING"),
+      )).limit(1);
+      if (!purchase || Number(purchase.amount) !== requestedAmount) {
+        return NextResponse.json({ error: "Purchase does not match an available listing." }, { status: 400 });
       }
     }
 

@@ -15,6 +15,10 @@ import {
   ShoppingBag,
 } from "lucide-react";
 import { formatDate } from "@/lib/payments";
+import { fetchUserProfile, initiatePayment, parseName } from "@/lib/payments";
+import { startListingPurchase } from "@/app/actions/listingPurchase";
+
+const CALLBACK_URL = process.env.NEXT_PUBLIC_PAYCHANGU_CALLBACK_URL;
 
 /**
  * 🛍 BIDDER MARKETPLACE TABS
@@ -31,6 +35,39 @@ export default function BidderMarketplace({ initialTab = "daily-sales" }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [purchaseError, setPurchaseError] = useState("");
+  const [purchasingId, setPurchasingId] = useState(null);
+
+  const handlePurchase = async (item, kind) => {
+    setPurchasingId(item.id);
+    setPurchaseError("");
+    try {
+      const purchase = await startListingPurchase(kind, item.id);
+      if (!purchase.success) throw new Error(purchase.error);
+      const profile = await fetchUserProfile();
+      const { firstName, lastName } = parseName(profile.name || "");
+      const returnUrl = new URL("/dashboard", window.location.origin);
+      returnUrl.searchParams.set("tab", "payments");
+      const checkout = await initiatePayment({
+        amount: purchase.data.amount,
+        currency: "MWK",
+        tx_ref: purchase.data.paymentRef,
+        email: profile.email,
+        first_name: firstName,
+        last_name: lastName,
+        phone: profile.phoneNumber || "",
+        method: "card",
+        purpose: purchase.data.kind,
+        callback_url: CALLBACK_URL,
+        return_url: returnUrl.toString(),
+      });
+      if (!checkout.checkoutUrl) throw new Error("Payment provider did not return a checkout link.");
+      window.location.assign(checkout.checkoutUrl);
+    } catch (purchaseFailure) {
+      setPurchaseError(purchaseFailure.message || "Could not start purchase.");
+      setPurchasingId(null);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -245,7 +282,11 @@ export default function BidderMarketplace({ initialTab = "daily-sales" }) {
                 )}
                 <div className="absolute top-3 left-3">
                   <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider bg-[var(--color-secondary)] text-white">
-                    {item.category || (activeTab === "daily-sales" ? "GOOD" : "PROPERTY")}
+                    {activeTab === "properties" && item.listingType === "LEASE"
+                      ? "FOR LEASE"
+                      : activeTab === "properties" && item.listingType === "SALE"
+                        ? "FOR SALE"
+                        : item.category || (activeTab === "daily-sales" ? "GOOD" : "PROPERTY")}
                   </span>
                 </div>
                 <div className="absolute bottom-3 left-3">
@@ -265,8 +306,8 @@ export default function BidderMarketplace({ initialTab = "daily-sales" }) {
                 </p>
 
                 <div className="flex items-center gap-1 text-[10px] text-[var(--color-muted)]">
-                  <MapPin className="w-3 h-3 text-[var(--color-primary)]" />
-                  {item.location}
+                  <User className="w-3 h-3 text-[var(--color-primary)]" />
+                  Client: {item.clientName || item.location || "N/A"}
                 </div>
 
                 <div className="flex items-center gap-1 text-[10px] text-[var(--color-muted)] mt-auto">
@@ -277,23 +318,40 @@ export default function BidderMarketplace({ initialTab = "daily-sales" }) {
                 <div className="flex items-end justify-between pt-2 border-t border-[var(--color-border)] mt-1">
                   <div>
                     <p className="text-[10px] text-[var(--color-muted)] mb-0.5">
-                      {activeTab === "daily-sales" ? "Buy Now Price" : item.currentBid ? "Current Bid" : "Starting Bid"}
+                      {activeTab === "daily-sales"
+                        ? "Buy Now Price"
+                        : item.listingType === "LEASE"
+                          ? "Rent per Month"
+                          : item.listingType === "SALE"
+                            ? "Asking Price"
+                            : item.currentBid ? "Current Bid" : "Starting Bid"}
                     </p>
                     <p className="text-base font-extrabold text-[var(--color-primary)]">
-                      {formatMoney(activeTab === "daily-sales" ? item.price : (item.currentBid || item.startingBid))}
+                      {formatMoney(activeTab === "daily-sales"
+                        ? item.price
+                        : item.listingType === "LEASE"
+                          ? item.monthlyRent
+                          : item.listingType === "SALE"
+                            ? item.askingPrice
+                            : (item.currentBid || item.startingBid))}
+                      {item.listingType === "LEASE" && <span className="ml-1 text-[10px] font-semibold">/ month</span>}
                     </p>
                   </div>
-                  {activeTab === "properties" && item.auctionItemId ? (
+                  {activeTab === "properties" && item.listingType === "AUCTION" && item.auctionItemId ? (
                     <button
                       onClick={() => router.push("/dashboard?tab=live-auctions")}
                       className="flex items-center gap-1 px-3 py-2 bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white rounded-xl text-[11px] font-bold transition-all active:scale-95"
                     >
                       <Gavel className="w-3.5 h-3.5" /> Bid
                     </button>
-                  ) : activeTab === "daily-sales" ? (
-                    <span className="flex items-center gap-1 px-3 py-2 bg-[var(--color-secondary)]/15 text-[var(--color-primary)] rounded-xl text-[11px] font-bold border border-[var(--color-primary)]/20">
-                      <Tag className="w-3.5 h-3.5" /> Fixed Price
-                    </span>
+                  ) : activeTab === "daily-sales" || (activeTab === "properties" && item.listingType === "SALE") ? (
+                    <button
+                      onClick={() => handlePurchase(item, activeTab === "daily-sales" ? "DAILY_SALE" : "PROPERTY")}
+                      disabled={purchasingId === item.id}
+                      className="flex items-center gap-1 px-3 py-2 bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white rounded-xl text-[11px] font-bold disabled:opacity-50"
+                    >
+                      <Tag className="w-3.5 h-3.5" /> {purchasingId === item.id ? "Starting..." : "Buy Now"}
+                    </button>
                   ) : null}
                 </div>
               </div>
@@ -301,6 +359,7 @@ export default function BidderMarketplace({ initialTab = "daily-sales" }) {
           ))}
         </div>
       )}
+      {purchaseError && <p className="text-sm text-red-400" role="alert">{purchaseError}</p>}
     </div>
   );
 }

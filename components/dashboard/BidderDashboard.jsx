@@ -458,7 +458,7 @@ export default function BidderDashboard() {
               {[
                 { label: "Browse Auctions", href: "/live-auctions", icon: Gavel, color: "text-blue-500", bg: "bg-blue-500/10" },
                 { label: "My Bids", href: "/dashboard/my-bids", icon: Activity, color: "text-emerald-500", bg: "bg-emerald-500/10" },
-                { label: "My Payments", href: "/dashboard/payments", icon: Receipt, color: "text-violet-500", bg: "bg-violet-500/10" },
+                { label: "My Receipts", href: "/dashboard?tab=payments", icon: Receipt, color: "text-violet-500", bg: "bg-violet-500/10" },
                 { label: "My Registrations", href: "/dashboard/registrations", icon: Shield, color: "text-amber-500", bg: "bg-amber-500/10" },
               ].map((action) => (
                 <Link key={action.label} href={action.href}>

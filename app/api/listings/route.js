@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { assets, auctionItems, bids, dailySales } from "@/lib/db/schema";
+import { auctionItems, bids, dailySales } from "@/lib/db/schema";
 import { desc } from "drizzle-orm";
 
 /**
@@ -57,7 +57,7 @@ export async function GET() {
           title: sale.asset.title,
           description: sale.asset.description,
           category: sale.asset.category,
-          location: sale.asset.location,
+          clientName: sale.asset.clientName || sale.asset.location,
           price: Number(sale.price),
           stockCount: sale.stockCount,
           isAvailable: sale.isAvailable,
@@ -72,11 +72,15 @@ export async function GET() {
           title: item.asset.title,
           description: item.asset.description,
           category: item.asset.category,
-          location: item.asset.location,
+          clientName: item.asset.clientName || item.asset.location,
+          listingType: item.asset.listingType || "AUCTION",
+          askingPrice: item.asset.salePrice ? Number(item.asset.salePrice) : null,
+          monthlyRent: item.asset.monthlyRent ? Number(item.asset.monthlyRent) : null,
+          rentDueDay: item.asset.rentDueDay,
           startingBid: Number(item.startingBid),
           reservePrice: Number(item.reservePrice),
-          depositAmount: Number(item.depositAmount),
-          biddingFee: Number(item.biddingFee),
+          entryFee: Number(item.depositAmount),
+          biddingDeposit: Number(item.biddingFee),
           status: item.status,
           currentBid: item.bids[0] ? Number(item.bids[0].amount) : null,
           imageUrl: item.images[0]?.url || null,

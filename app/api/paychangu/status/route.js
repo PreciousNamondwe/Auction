@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { payments } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { sendPaymentReceipt } from "@/lib/paymentReceipts";
+import { syncListingSalePayment } from "@/lib/paymentSales";
 
 export async function GET(request) {
   try {
@@ -50,6 +51,7 @@ export async function GET(request) {
     if (mappedStatus !== payment.gatewayStatus) {
       await db.update(payments).set({ gatewayStatus: mappedStatus }).where(eq(payments.reference, tx_ref));
     }
+    await syncListingSalePayment(tx_ref, mappedStatus);
     const receiptEmailed = mappedStatus === "completed" ? await sendPaymentReceipt(tx_ref) : false;
 
     return NextResponse.json({

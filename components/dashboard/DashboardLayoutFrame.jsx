@@ -21,7 +21,6 @@ import {
   Bell,
   Sun,
   Moon,
-  Search,
   ShoppingBag,
   Home
 } from "lucide-react";
@@ -34,6 +33,7 @@ import AuctioneerManageAssets from "@/components/dashboard/AuctioneerManageAsset
 import AuctioneerAddListing from "@/components/dashboard/AuctioneerAddListing";
 import BidderMarketplace from "@/components/dashboard/BidderMarketplace";
 import PaymentHistory from "@/components/dashboard/PaymentHistory";
+import AuctioneerFinance from "@/components/dashboard/AuctioneerFinance";
 import Mybids from "./Mybids"
 
 export default function DashboardLayoutFrame({ user, serializedAuctionItems, isAuctioneer, forceTab = null, addListingInitialMode = "property" }) {
@@ -43,7 +43,6 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
   const [activeTab, setActiveTab] = useState(forceTab || searchParams.get("tab") || "live-auctions");
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const [liveCountState, setLiveCountState] = useState(0);
-  const [searchQuery, setSearchQuery] = useState("");
   const [accessPaymentMessage, setAccessPaymentMessage] = useState("");
   const { theme, toggleTheme } = useTheme();
 
@@ -77,7 +76,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
     if (
       !returnedPaymentRef ||
       !returnedAuctionId ||
-      !["BIDDING_FEE", "SECURITY_DEPOSIT"].includes(returnedFeeType) ||
+      !["ENTRY_FEE", "BIDDING_DEPOSIT", "BIDDING_FEE", "SECURITY_DEPOSIT"].includes(returnedFeeType) ||
       !["BIDDER", "AUCTIONEER"].includes(user?.role)
     ) return;
 
@@ -135,7 +134,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
       "my-bids": "My Bids",
       "manage-listings": "Manage Listings",
       "add-listing": "Add Listing",
-      "payments": "Payments & Receipts",
+      "payments": isAuctioneer ? "Payments Received" : "Receipts",
       "reports": "Reports",
       "settings": "Settings"
     };
@@ -149,7 +148,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
     { id: "properties", icon: Home, label: "Properties", show: !isAuctioneer },
     { id: "my-bids", icon: Gavel, label: "My Bids", show: !isAuctioneer },
     { id: "manage-listings", icon: FolderGit, label: "Manage Listings", show: isAuctioneer },
-    { id: "payments", icon: Wallet, label: "Payments & Receipts", show: true },
+    { id: "payments", icon: Wallet, label: isAuctioneer ? "Payments Received" : "Receipts", show: true },
     { id: "reports", icon: BarChart3, label: "Reports", show: isAuctioneer },
     { id: "settings", icon: Settings, label: "Settings", show: true },
   ];
@@ -239,19 +238,6 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
               <Gavel className="w-4 h-4" />
             </div>
 
-            {/* Search Bar */}
-            <div className="hidden sm:flex items-center flex-1 max-w-md">
-              <div className="relative w-full">
-                <Search className="w-4 h-4 text-[var(--color-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="Search auctions, listings..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-[var(--color-input)] border border-[var(--color-border)] rounded-xl py-2 pl-10 pr-4 text-sm text-[var(--color-text)] placeholder-[var(--color-muted)] focus:outline-none focus:border-[var(--color-primary)]/40 focus:ring-1 focus:ring-[var(--color-primary)]/20 transition-all"
-                />
-              </div>
-            </div>
           </div>
 
           <div className="flex items-center gap-3">
@@ -431,9 +417,15 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
               <AuctioneerAddListing initialMode={addListingInitialMode} />
             )}
 
-            {/* Payments & Receipts */}
+            {/* Payments received / bidder receipts */}
             {activeTab === "payments" && (
-              <PaymentHistory role={user?.role} />
+              isAuctioneer
+                ? <AuctioneerFinance view="payments" />
+                : <PaymentHistory role={user?.role} />
+            )}
+
+            {activeTab === "reports" && isAuctioneer && (
+              <AuctioneerFinance view="reports" />
             )}
 
             {/* Settings */}
@@ -587,7 +579,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
           }`}
         >
           <Wallet className="w-5 h-5 mb-0.5" />
-          <span className="text-[10px] tracking-tight">History</span>
+          <span className="text-[10px] tracking-tight">{isAuctioneer ? "Payments" : "Receipts"}</span>
         </button>
 
       </div>

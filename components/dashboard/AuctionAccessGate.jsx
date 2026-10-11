@@ -22,15 +22,15 @@ import {
 } from "@/lib/payments";
 import {
   getAuctionAccessStatus,
-  startBiddingFeePayment,
-  startSecurityDepositPayment,
+  startEntryFeePayment,
+  startBiddingDepositPayment,
   confirmAuctionAccessPayment,
 } from "@/app/actions/auctionAccess";
 
 const CALLBACK_URL = process.env.NEXT_PUBLIC_PAYCHANGU_CALLBACK_URL;
 
 /**
- * One row of the two-step fee sequence (bidding fee / security deposit).
+ * One row of the entry fee / bidding deposit sequence.
  * Declared outside the gate component so it is not re-created on every render.
  */
 const FeeStepRow = ({ label, amount, done, active, busy, pending, onPay }) => (
@@ -97,7 +97,7 @@ export default function AuctionAccessGate({ open, onClose, auctionItemId, roomId
   const [stepState, setStepState] = useState("idle"); // idle | paying | confirming | error
   const [error, setError] = useState(null);
   const [user, setUser] = useState(null);
-  const [activeFee, setActiveFee] = useState(null); // BIDDING_FEE | SECURITY_DEPOSIT
+  const [activeFee, setActiveFee] = useState(null);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -107,8 +107,8 @@ export default function AuctionAccessGate({ open, onClose, auctionItemId, roomId
         let status = res.data;
         let confirmationError = null;
         const pendingPayments = [
-          ["BIDDING_FEE", status.pendingBiddingFeeRef],
-          ["SECURITY_DEPOSIT", status.pendingDepositRef],
+          ["ENTRY_FEE", status.pendingEntryFeeRef],
+          ["BIDDING_DEPOSIT", status.pendingBiddingDepositRef],
         ].filter(([, reference]) => reference);
 
         for (const [feeType, reference] of pendingPayments) {
@@ -156,9 +156,9 @@ export default function AuctionAccessGate({ open, onClose, auctionItemId, roomId
     try {
       // 1. Register the pending access payment server-side
       const startRes =
-        feeType === "BIDDING_FEE"
-          ? await startBiddingFeePayment(auctionItemId)
-          : await startSecurityDepositPayment(auctionItemId);
+        feeType === "ENTRY_FEE"
+          ? await startEntryFeePayment(auctionItemId)
+          : await startBiddingDepositPayment(auctionItemId);
 
       if (!startRes.success) throw new Error(startRes.error);
       if (startRes.data?.alreadyPaid) {
@@ -218,8 +218,8 @@ export default function AuctionAccessGate({ open, onClose, auctionItemId, roomId
   };
 
   const nextStep = status?.nextStep;
-  const biddingFeeDone = status?.biddingFeePaid;
-  const depositDone = status?.depositPaid;
+  const entryFeeDone = status?.entryFeePaid;
+  const biddingDepositDone = status?.biddingDepositPaid;
 
   const isFeeBusy = (feeType) =>
     (stepState === "paying" || stepState === "confirming") && activeFee === feeType;
@@ -256,7 +256,7 @@ export default function AuctionAccessGate({ open, onClose, auctionItemId, roomId
         {/* Progress rail */}
         <div className="px-5 pt-4">
           <div className="flex items-center gap-1.5">
-            {[biddingFeeDone, depositDone, nextStep === "ACCESS_GRANTED"].map((done, i) => (
+            {[entryFeeDone, biddingDepositDone, nextStep === "ACCESS_GRANTED"].map((done, i) => (
               <div key={i} className="flex-1 h-1 rounded-full bg-[var(--color-input)] overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all duration-500 ${
@@ -284,30 +284,30 @@ export default function AuctionAccessGate({ open, onClose, auctionItemId, roomId
               <div className="flex items-start gap-2 p-3 bg-[var(--color-secondary)]/5 border border-[var(--color-primary)]/15 rounded-xl">
                 <ShieldCheck className="w-4 h-4 text-[var(--color-primary)] mt-0.5 shrink-0" />
                 <p className="text-[11px] text-[var(--color-muted)] leading-relaxed">
-                  To enter this auction room you must first pay the <span className="font-bold text-[var(--color-text)]">bidding fee</span>, then a{" "}
-                  <span className="font-bold text-[var(--color-text)]">security deposit</span> which guarantees you will honour your bid. Both payments
+                  To enter this auction room, pay the <span className="font-bold text-[var(--color-text)]">entry fee</span> first, then the{" "}
+                  <span className="font-bold text-[var(--color-text)]">bidding fee / security deposit</span> used to secure your bidding funds. Both payments
                   are confirmed before the room opens for you.
                 </p>
               </div>
 
               <FeeStepRow
-                label="Bidding Fee"
-                amount={status?.biddingFee ?? 0}
-                done={biddingFeeDone}
-                active={nextStep === "BIDDING_FEE"}
-                busy={isFeeBusy("BIDDING_FEE")}
-                pending={Boolean(status?.pendingBiddingFeeRef)}
-                onPay={() => status?.pendingBiddingFeeRef ? loadStatus() : payFee("BIDDING_FEE")}
+                label="Entry Fee"
+                amount={status?.entryFee ?? 0}
+                done={entryFeeDone}
+                active={nextStep === "ENTRY_FEE"}
+                busy={isFeeBusy("ENTRY_FEE")}
+                pending={Boolean(status?.pendingEntryFeeRef)}
+                onPay={() => status?.pendingEntryFeeRef ? loadStatus() : payFee("ENTRY_FEE")}
               />
 
               <FeeStepRow
-                label="Security Deposit"
-                amount={status?.depositAmount ?? 0}
-                done={depositDone}
-                active={nextStep === "SECURITY_DEPOSIT"}
-                busy={isFeeBusy("SECURITY_DEPOSIT")}
-                pending={Boolean(status?.pendingDepositRef)}
-                onPay={() => status?.pendingDepositRef ? loadStatus() : payFee("SECURITY_DEPOSIT")}
+                label="Bidding Fee / Security Deposit"
+                amount={status?.biddingDeposit ?? 0}
+                done={biddingDepositDone}
+                active={nextStep === "BIDDING_DEPOSIT"}
+                busy={isFeeBusy("BIDDING_DEPOSIT")}
+                pending={Boolean(status?.pendingBiddingDepositRef)}
+                onPay={() => status?.pendingBiddingDepositRef ? loadStatus() : payFee("BIDDING_DEPOSIT")}
               />
 
               {error && stepState === "error" && (
@@ -338,7 +338,7 @@ export default function AuctionAccessGate({ open, onClose, auctionItemId, roomId
               <div className="pt-2 flex items-center justify-between text-[10px] text-[var(--color-muted)] border-t border-[var(--color-border)]">
                 <span className="flex items-center gap-1">
                   <Receipt className="w-3 h-3" />
-                  Total to pay: {formatAmount((status?.biddingFee || 0) + (status?.depositAmount || 0))}
+                  Total to pay: {formatAmount((status?.entryFee || 0) + (status?.biddingDeposit || 0))}
                 </span>
                 <span>Secured via PayChangu</span>
               </div>

@@ -325,7 +325,7 @@ export default function LiveRoomPage({ params }) {
                 </p>
               </div>
               <div className="rounded-xl p-3 text-center border" style={{ backgroundColor: "var(--color-card)", borderColor: "var(--color-border)" }}>
-                <p className="text-[9px] uppercase tracking-wider mb-1" style={{ color: "var(--color-muted)" }}>Deposit</p>
+                <p className="text-[9px] uppercase tracking-wider mb-1" style={{ color: "var(--color-muted)" }}>Entry Fee</p>
                 <p className="text-sm font-black font-mono">{Number(auctionItem.depositAmount).toLocaleString()}</p>
               </div>
               <div className="rounded-xl p-3 text-center border" style={{ backgroundColor: "var(--color-card)", borderColor: "var(--color-border)" }}>

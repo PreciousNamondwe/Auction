@@ -7,8 +7,15 @@ import { auctionAccessPayments, auctionItems, payments } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { sendPaymentReceipt } from "@/lib/paymentReceipts";
 
-const DEFAULT_BIDDING_FEE = 5000;
-const DEFAULT_SECURITY_DEPOSIT = 50000;
+const DEFAULT_ENTRY_FEE = 50000;
+const DEFAULT_BIDDING_DEPOSIT = 5000;
+
+const normalizeFeeType = (feeType) => ({
+  ENTRY_FEE: "ENTRY_FEE",
+  SECURITY_DEPOSIT: "ENTRY_FEE",
+  BIDDING_DEPOSIT: "BIDDING_DEPOSIT",
+  BIDDING_FEE: "BIDDING_DEPOSIT",
+})[feeType] || null;
 
 function getRequiredAmount(value, defaultAmount) {
   const amount = Number(value);
@@ -19,8 +26,8 @@ function getRequiredAmount(value, defaultAmount) {
  * 🎟 LIVE AUCTION ACCESS GATE
  *
  * Document flow: a bidder or auctioneer who wants to join a live auction must:
- *   1. Pay the BIDDING FEE first.
- *   2. On confirmation, pay the SECURITY DEPOSIT (guarantee they honour their bid).
+ *   1. Pay the ENTRY FEE.
+ *   2. Pay the BIDDING DEPOSIT used to secure bidding funds.
  *   3. Only after BOTH payments are confirmed does the system direct them to the auction room.
  */
 
@@ -62,17 +69,17 @@ export async function getAuctionAccessStatus(auctionItemId) {
       eq(auctionAccessPayments.auctionItemId, cleanId),
     ));
 
-    const biddingFeePayment = accessPayments.find((p) => p.feeType === "BIDDING_FEE");
-    const depositPayment = accessPayments.find((p) => p.feeType === "SECURITY_DEPOSIT");
+    const entryFeePayment = accessPayments.find((p) => ["ENTRY_FEE", "SECURITY_DEPOSIT"].includes(p.feeType));
+    const biddingDepositPayment = accessPayments.find((p) => ["BIDDING_DEPOSIT", "BIDDING_FEE"].includes(p.feeType));
 
-    const biddingFeePaid = biddingFeePayment?.status === "PAID";
-    const depositPaid = depositPayment?.status === "PAID";
+    const entryFeePaid = entryFeePayment?.status === "PAID";
+    const biddingDepositPaid = biddingDepositPayment?.status === "PAID";
 
     let nextStep;
-    if (!biddingFeePaid) {
-      nextStep = "BIDDING_FEE";
-    } else if (!depositPaid) {
-      nextStep = "SECURITY_DEPOSIT";
+    if (!entryFeePaid) {
+      nextStep = "ENTRY_FEE";
+    } else if (!biddingDepositPaid) {
+      nextStep = "BIDDING_DEPOSIT";
     } else {
       nextStep = "ACCESS_GRANTED";
     }
@@ -86,13 +93,13 @@ export async function getAuctionAccessStatus(auctionItemId) {
         itemTitle: item.asset?.title || "Auction Lot",
         location: item.asset?.location || "",
         startingBid: Number(item.startingBid),
-        biddingFee: getRequiredAmount(item.biddingFee, DEFAULT_BIDDING_FEE),
-        depositAmount: getRequiredAmount(item.depositAmount, DEFAULT_SECURITY_DEPOSIT),
-        biddingFeePaid,
-        depositPaid,
+        entryFee: getRequiredAmount(item.depositAmount, DEFAULT_ENTRY_FEE),
+        biddingDeposit: getRequiredAmount(item.biddingFee, DEFAULT_BIDDING_DEPOSIT),
+        entryFeePaid,
+        biddingDepositPaid,
         nextStep,
-        pendingBiddingFeeRef: biddingFeePayment?.status === "PENDING" ? biddingFeePayment.paymentRef : null,
-        pendingDepositRef: depositPayment?.status === "PENDING" ? depositPayment.paymentRef : null,
+        pendingEntryFeeRef: entryFeePayment?.status === "PENDING" ? entryFeePayment.paymentRef : null,
+        pendingBiddingDepositRef: biddingDepositPayment?.status === "PENDING" ? biddingDepositPayment.paymentRef : null,
       },
     };
   } catch (error) {
@@ -102,7 +109,7 @@ export async function getAuctionAccessStatus(auctionItemId) {
 }
 
 /**
- * Step 1 — begin the BIDDING FEE payment for a live auction lot.
+ * Begin an auction entry-fee or bidding-deposit payment.
  * Creates a PENDING access record with a server-generated payment reference.
  */
 async function startAccessFeePayment(auctionItemId, feeType) {
@@ -119,13 +126,13 @@ async function startAccessFeePayment(auctionItemId, feeType) {
 
     const item = await db.query.auctionItems.findFirst({
       where: eq(auctionItems.id, cleanId),
-      columns: feeType === "BIDDING_FEE" ? { biddingFee: true } : { depositAmount: true },
+      columns: feeType === "BIDDING_DEPOSIT" ? { biddingFee: true } : { depositAmount: true },
     });
     if (!item) return { success: false, error: "Auction item not found." };
 
-    const amount = feeType === "BIDDING_FEE"
-      ? getRequiredAmount(item.biddingFee, DEFAULT_BIDDING_FEE)
-      : getRequiredAmount(item.depositAmount, DEFAULT_SECURITY_DEPOSIT);
+    const amount = feeType === "BIDDING_DEPOSIT"
+      ? getRequiredAmount(item.biddingFee, DEFAULT_BIDDING_DEPOSIT)
+      : getRequiredAmount(item.depositAmount, DEFAULT_ENTRY_FEE);
 
     const [existing] = await db.select().from(auctionAccessPayments).where(and(
       eq(auctionAccessPayments.userId, Number(session.user.id)),
@@ -173,14 +180,14 @@ async function startAccessFeePayment(auctionItemId, feeType) {
   }
 }
 
-export async function startBiddingFeePayment(auctionItemId) {
-  return startAccessFeePayment(auctionItemId, "BIDDING_FEE");
+export async function startEntryFeePayment(auctionItemId) {
+  return startAccessFeePayment(auctionItemId, "ENTRY_FEE");
 }
 
 /**
- * Step 2 — begin the SECURITY DEPOSIT payment (only after the bidding fee is PAID).
+ * Begin the bidding deposit payment only after the entry fee is paid.
  */
-export async function startSecurityDepositPayment(auctionItemId) {
+export async function startBiddingDepositPayment(auctionItemId) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
@@ -192,20 +199,20 @@ export async function startSecurityDepositPayment(auctionItemId) {
       return { success: false, error: "Invalid auction item ID." };
     }
 
-    const [biddingFee] = await db.select().from(auctionAccessPayments).where(and(
+    const [entryFee] = await db.select().from(auctionAccessPayments).where(and(
       eq(auctionAccessPayments.userId, Number(session.user.id)),
       eq(auctionAccessPayments.auctionItemId, cleanId),
-      eq(auctionAccessPayments.feeType, "BIDDING_FEE"),
+      eq(auctionAccessPayments.feeType, "ENTRY_FEE"),
     )).limit(1);
 
-    if (!biddingFee || biddingFee.status !== "PAID") {
-      return { success: false, error: "You must complete the bidding fee payment first." };
+    if (!entryFee || entryFee.status !== "PAID") {
+      return { success: false, error: "You must complete the entry fee payment first." };
     }
 
-    return startAccessFeePayment(cleanId, "SECURITY_DEPOSIT");
+    return startAccessFeePayment(cleanId, "BIDDING_DEPOSIT");
   } catch (error) {
-    console.error("❌ Security deposit start failure:", error);
-    return { success: false, error: error.message || "Could not start security deposit payment." };
+    console.error("❌ Bidding deposit start failure:", error);
+    return { success: false, error: error.message || "Could not start bidding deposit payment." };
   }
 }
 
@@ -221,11 +228,7 @@ export async function confirmAuctionAccessPayment(auctionItemId, feeType, paymen
     }
 
     const cleanId = Number(auctionItemId);
-    const normalizedType = feeType === "SECURITY_DEPOSIT"
-      ? "SECURITY_DEPOSIT"
-      : feeType === "BIDDING_FEE"
-        ? "BIDDING_FEE"
-        : null;
+    const normalizedType = normalizeFeeType(feeType);
 
     if (!Number.isInteger(cleanId) || cleanId <= 0 || !normalizedType || typeof paymentRef !== "string" || !paymentRef.trim()) {
       return { success: false, error: "Invalid payment confirmation parameters." };

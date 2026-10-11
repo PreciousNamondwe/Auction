@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "sales_one_pending_property_per_asset_idx" ON "sales" USING btree ("assetId") WHERE "sales"."kind" = 'PROPERTY_PURCHASE' AND "sales"."status" = 'PENDING';

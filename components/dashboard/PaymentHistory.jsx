@@ -68,6 +68,14 @@ export default function PaymentHistory({ role }) {
 
   const isPaymentComplete = (payment) =>
     ["completed", "success"].includes(payment.gatewayStatus.toLowerCase());
+  const getPurposeLabel = (purpose) => ({
+    ENTRY_FEE: "Auction entry fee",
+    BIDDING_DEPOSIT: "Auction bidding fee / security deposit",
+    BIDDING_FEE: "Auction bidding fee / security deposit",
+    SECURITY_DEPOSIT: "Auction entry fee",
+    DAILY_SALE_PURCHASE: "Daily sale purchase",
+    PROPERTY_PURCHASE: "Property purchase",
+  })[purpose] || purpose || "Payment";
 
   useEffect(() => {
     const timeout = setTimeout(() => loadPayments(), 0);
@@ -79,7 +87,7 @@ export default function PaymentHistory({ role }) {
       <header className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] pb-4">
         <div className="flex items-center gap-3">
           <Receipt className="h-5 w-5 text-[var(--color-primary)]" />
-          <h1 className="text-lg font-bold text-[var(--color-text)]">Payments &amp; Receipts</h1>
+          <h1 className="text-lg font-bold text-[var(--color-text)]">{isAdmin ? "Payments" : "Receipts"}</h1>
         </div>
         <button
           type="button"
@@ -134,7 +142,7 @@ export default function PaymentHistory({ role }) {
               {payments.map((payment) => (
                 <tr key={payment.id} className="border-b border-[var(--color-border)] last:border-0">
                   <td className="px-3 py-4">
-                    <p className="text-sm font-semibold text-[var(--color-text)]">{payment.purpose || "Payment"}</p>
+                    <p className="text-sm font-semibold text-[var(--color-text)]">{getPurposeLabel(payment.purpose)}</p>
                     <p className="mt-1 font-mono text-[10px] text-[var(--color-muted)]">{payment.reference}</p>
                   </td>
                   <td className="px-3 py-4 text-xs text-[var(--color-muted)]">{formatDate(payment.createdAt)}</td>
@@ -220,7 +228,7 @@ export default function PaymentHistory({ role }) {
             </div>
 
             <dl className="space-y-4 text-sm">
-              <div className="flex justify-between gap-4"><dt className="text-[var(--color-muted)]">Purpose</dt><dd className="text-right font-semibold">{selectedPayment.purpose || "Payment"}</dd></div>
+              <div className="flex justify-between gap-4"><dt className="text-[var(--color-muted)]">Purpose</dt><dd className="text-right font-semibold">{getPurposeLabel(selectedPayment.purpose)}</dd></div>
               <div className="flex justify-between gap-4"><dt className="text-[var(--color-muted)]">Amount</dt><dd className="text-right font-bold">{formatAmount(selectedPayment.amount)}</dd></div>
               <div className="flex justify-between gap-4"><dt className="text-[var(--color-muted)]">Status</dt><dd className={`text-right font-semibold capitalize ${getStatusColor(selectedPayment.gatewayStatus)}`}>{selectedPayment.gatewayStatus}</dd></div>
               <div className="flex justify-between gap-4"><dt className="text-[var(--color-muted)]">Date</dt><dd className="text-right">{formatDate(selectedPayment.createdAt)}</dd></div>

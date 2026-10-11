@@ -7,7 +7,6 @@ import { hasClearedAuctionGate } from "@/app/actions/auctionAccess";
 import AuctionAccessGate from "@/components/dashboard/AuctionAccessGate";
 import { 
   Tv, 
-  Search, 
   MapPin, 
   Loader2, 
   ArrowUpRight,
@@ -17,14 +16,12 @@ import {
   TrendingUp,
   ChevronRight,
   Filter,
-  X
 } from "lucide-react";
 
 export default function BidderLiveConsole({ auctionItems = [] }) {
   const router = useRouter();
   const [activeAuctions, setActiveAuctions] = useState([]);
   const [isJoiningId, setIsJoiningId] = useState(null);
-  const [searchQuery, setSearchQuery] = useState("");
   const [filterCategory, setFilterCategory] = useState("ALL");
   const [loading, setLoading] = useState(true);
   const [gateAuction, setGateAuction] = useState(null); // auction pending fee clearance
@@ -121,18 +118,11 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
 
   // Filter auctions
   const filteredAuctions = activeAuctions.filter(item => {
-    const matchesSearch = (
-      item.itemTitle?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.asset?.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.location?.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-
     const matchesCategory = filterCategory === "ALL" || 
       item.category?.toUpperCase() === filterCategory ||
       item.asset?.category?.toUpperCase() === filterCategory;
 
-    return matchesSearch && matchesCategory;
+    return matchesCategory;
   });
 
   // Get unique categories
@@ -203,27 +193,8 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
         </div>
       </div>
 
-      {/* Search & Filter Bar */}
+      {/* Category filters */}
       <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)]" />
-          <input 
-            type="text"
-            placeholder="Search auctions by title, location..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl pl-10 pr-4 py-2.5 text-sm text-[var(--color-text)] placeholder-[var(--color-muted)] focus:outline-none focus:border-[var(--color-primary)]/40 focus:ring-1 focus:ring-[var(--color-primary)]/20 transition-all"
-          />
-          {searchQuery && (
-            <button 
-              onClick={() => setSearchQuery("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)] hover:text-[var(--color-text)]"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-
         <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
           <Filter className="w-4 h-4 text-[var(--color-muted)] shrink-0" />
           {categories.map(cat => (
@@ -364,9 +335,15 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
                       </span>
                     </div>
                     <div className="flex items-center justify-between border-t border-[var(--color-border)] pt-2">
-                      <span className="text-[10px] text-[var(--color-muted)] uppercase font-bold tracking-wider">Deposit</span>
+                      <span className="text-[10px] text-[var(--color-muted)] uppercase font-bold tracking-wider">Entry Fee</span>
                       <span className="text-xs font-bold text-[var(--color-text)]">
                         MWK {Number(auction.depositAmount || 50000).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-[var(--color-border)] pt-2">
+                      <span className="text-[10px] text-[var(--color-muted)] uppercase font-bold tracking-wider">Bidding Fee / Security Deposit</span>
+                      <span className="text-xs font-bold text-[var(--color-text)]">
+                        MWK {Number(auction.biddingFee || 5000).toLocaleString()}
                       </span>
                     </div>
                   </div>

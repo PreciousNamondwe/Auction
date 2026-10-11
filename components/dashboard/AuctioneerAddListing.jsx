@@ -25,6 +25,7 @@ import { createDailySaleListing } from "@/app/actions/createDailySale";
 export default function AuctioneerAddListing({ initialMode = "property" }) {
   const router = useRouter();
   const [mode, setMode] = useState(initialMode === "daily-sale" ? "daily-sale" : "property");
+  const [listingType, setListingType] = useState("AUCTION");
   const [isPublishing, setIsPublishing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("REAL_ESTATE");
   const [customCategory, setCustomCategory] = useState("");
@@ -35,9 +36,10 @@ export default function AuctioneerAddListing({ initialMode = "property" }) {
   ]);
 
   const [form, setForm] = useState({
-    title: "", description: "", location: "", documentUrl: "",
-    startingBid: "", reservePrice: "", depositAmount: "",
-    biddingFee: "5000", price: "", stockCount: "1",
+    title: "", description: "", clientName: "", documentUrl: "",
+    startingBid: "", reservePrice: "", entryFee: "",
+    biddingDeposit: "5000", askingPrice: "", monthlyRent: "", rentDueDay: "1",
+    price: "", stockCount: "1",
   });
 
   const addSpecificationRow = () => setDynamicAttributes([...dynamicAttributes, { key: "", value: "" }]);
@@ -63,8 +65,7 @@ export default function AuctioneerAddListing({ initialMode = "property" }) {
       const formData = new FormData();
       formData.append("title", form.title);
       formData.append("description", form.description);
-      formData.append("location", form.location);
-      formData.append("documentUrl", form.documentUrl);
+      formData.append("clientName", form.clientName);
       formData.append("category", finalCategory);
       formData.append("dynamicAttributes", JSON.stringify(dynamicAttributes));
 
@@ -81,13 +82,22 @@ export default function AuctioneerAddListing({ initialMode = "property" }) {
         if (!res.success) throw new Error(res.error);
         alert("🎉 Daily sale listing published!");
       } else {
-        formData.append("startingBid", form.startingBid);
-        formData.append("reservePrice", form.reservePrice);
-        formData.append("depositAmount", form.depositAmount);
-        formData.append("biddingFee", form.biddingFee || "5000");
+        formData.append("listingType", listingType);
+        if (listingType === "AUCTION") {
+          formData.append("documentUrl", form.documentUrl);
+          formData.append("startingBid", form.startingBid);
+          formData.append("reservePrice", form.reservePrice);
+          formData.append("entryFee", form.entryFee);
+          formData.append("biddingDeposit", form.biddingDeposit || "5000");
+        } else if (listingType === "SALE") {
+          formData.append("askingPrice", form.askingPrice);
+        } else {
+          formData.append("monthlyRent", form.monthlyRent);
+          formData.append("rentDueDay", form.rentDueDay);
+        }
         const res = await createAssetAndAuction(formData);
         if (!res.success) throw new Error(res.error || "Failed to publish auction listing.");
-        alert("🎉 Property auction listing registered!");
+        alert(`🎉 Property ${listingType === "AUCTION" ? "auction" : listingType.toLowerCase()} listing registered!`);
       }
 
       router.push("/dashboard");
@@ -150,8 +160,8 @@ export default function AuctioneerAddListing({ initialMode = "property" }) {
             <input type="text" required placeholder={mode === "daily-sale" ? "e.g. Toyota Hilux 2022 — 4,500km" : "e.g. 3 Bedroom Residential Property - Area 47"} value={form.title} onChange={(e) => setForm({...form, title: e.target.value})} className={inputClass} />
           </div>
           <div>
-            <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Physical Location</label>
-            <input type="text" required placeholder="e.g. Lilongwe City Centre" value={form.location} onChange={(e) => setForm({...form, location: e.target.value})} className={inputClass} />
+            <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Client Name</label>
+            <input type="text" required placeholder="e.g. John Banda" value={form.clientName} onChange={(e) => setForm({...form, clientName: e.target.value})} className={inputClass} />
           </div>
         </div>
 
@@ -190,10 +200,10 @@ export default function AuctioneerAddListing({ initialMode = "property" }) {
               <input type="file" accept="image/*" onChange={(e) => setUploadedFile(e.target.files?.[0] || null)} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
             </div>
           </div>
-          <div>
+          {mode === "property" && listingType === "AUCTION" && <div>
             <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Legal Document Link</label>
             <input type="url" placeholder="https://your-host-cdn.com/file.pdf" value={form.documentUrl} onChange={(e) => setForm({...form, documentUrl: e.target.value})} className={inputClass} />
-          </div>
+          </div>}
         </div>
 
         {/* Category */}
@@ -246,32 +256,57 @@ export default function AuctioneerAddListing({ initialMode = "property" }) {
           <div className="bg-[var(--color-secondary)]/5 p-4 border border-[var(--color-primary)]/10 rounded-xl">
             <div className="flex items-center gap-1.5 border-b border-[var(--color-primary)]/10 pb-2 mb-3">
               <DollarSign className="w-3.5 h-3.5 text-[var(--color-primary)]" />
-              <span className="text-[10px] font-bold text-[var(--color-text)] uppercase tracking-wider">Financial Pricing Framework</span>
+              <span className="text-[10px] font-bold text-[var(--color-text)] uppercase tracking-wider">Property Listing Type &amp; Pricing</span>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div>
-                <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Starting Bid (MWK)</label>
-                <input type="number" required placeholder="5000000" value={form.startingBid} onChange={(e) => setForm({...form, startingBid: e.target.value})} className={inputClass} />
+            <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Listing Type</label>
+            <select value={listingType} onChange={(e) => setListingType(e.target.value)} className={`${inputClass} mb-4`}>
+              <option value="AUCTION">Auction</option>
+              <option value="SALE">For Sale</option>
+              <option value="LEASE">For Lease</option>
+            </select>
+            {listingType === "AUCTION" ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Starting Bid (MWK)</label>
+                  <input type="number" min="1" required placeholder="5000000" value={form.startingBid} onChange={(e) => setForm({...form, startingBid: e.target.value})} className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Reserve Price (MWK)</label>
+                  <input type="number" min="1" required placeholder="7500000" value={form.reservePrice} onChange={(e) => setForm({...form, reservePrice: e.target.value})} className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Entry Fee (MWK)</label>
+                  <input type="number" min="1" required placeholder="250000" value={form.entryFee} onChange={(e) => setForm({...form, entryFee: e.target.value})} className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Bidding Fee / Security Deposit (MWK)</label>
+                  <input type="number" min="1" required placeholder="5000" value={form.biddingDeposit} onChange={(e) => setForm({...form, biddingDeposit: e.target.value})} className={inputClass} />
+                </div>
               </div>
+            ) : listingType === "SALE" ? (
               <div>
-                <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Reserve Price (MWK)</label>
-                <input type="number" required placeholder="7500000" value={form.reservePrice} onChange={(e) => setForm({...form, reservePrice: e.target.value})} className={inputClass} />
+                <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Asking Price (MWK)</label>
+                <input type="number" min="1" required placeholder="25000000" value={form.askingPrice} onChange={(e) => setForm({...form, askingPrice: e.target.value})} className={inputClass} />
               </div>
-              <div>
-                <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Security Deposit (MWK)</label>
-                <input type="number" required placeholder="250000" value={form.depositAmount} onChange={(e) => setForm({...form, depositAmount: e.target.value})} className={inputClass} />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Monthly Rent (MWK)</label>
+                  <input type="number" min="1" required placeholder="350000" value={form.monthlyRent} onChange={(e) => setForm({...form, monthlyRent: e.target.value})} className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Monthly Rent Due Day</label>
+                  <input type="number" min="1" max="28" required value={form.rentDueDay} onChange={(e) => setForm({...form, rentDueDay: e.target.value})} className={inputClass} />
+                  <p className="mt-1 text-[10px] text-[var(--color-muted)]">The auctioneer will receive a monthly email reminder on this day.</p>
+                </div>
               </div>
-              <div>
-                <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Bidding Fee (MWK)</label>
-                <input type="number" min="1" required placeholder="5000" value={form.biddingFee} onChange={(e) => setForm({...form, biddingFee: e.target.value})} className={inputClass} />
-              </div>
-            </div>
+            )}
           </div>
         )}
 
         <div className="flex justify-end pt-2">
           <button type="submit" disabled={isPublishing} className="px-6 py-3 bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white text-xs font-bold rounded-xl shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95">
-            {isPublishing ? "Publishing..." : mode === "daily-sale" ? "Publish Daily Sale" : "Save Asset & Add to Inventory"}
+            {isPublishing ? "Publishing..." : mode === "daily-sale" ? "Publish Daily Sale" : listingType === "AUCTION" ? "Save Asset & Add to Inventory" : "Publish Property Listing"}
           </button>
         </div>
       </div>

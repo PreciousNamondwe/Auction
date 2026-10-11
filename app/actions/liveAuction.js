@@ -351,6 +351,7 @@ export async function getActiveLiveAuctions() {
         category: item.asset?.category || "General",
         startingBid: Number(item.startingBid),
         depositAmount: Number(item.depositAmount),
+        biddingFee: Number(item.biddingFee),
         imageUrl: item.images[0]?.url || "/placeholder-property.jpg",
         createdAt: item.updatedAt.toISOString()
       }))

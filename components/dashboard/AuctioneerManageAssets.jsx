@@ -69,29 +69,6 @@ export default function AuctioneerManageAssets() {
 
   const formatMoney = (v) => `MK ${Number(v || 0).toLocaleString()}`;
 
-  const StatusChip = ({ status }) => {
-    const isLive = status === "ACTIVE" || status === "LIVE";
-    return (
-      <span
-        className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md flex items-center gap-1 border ${
-          isLive
-            ? "bg-red-500/10 text-red-400 border-red-500/20"
-            : status === "CLOSED"
-            ? "bg-[var(--color-input)] text-[var(--color-muted)] border-[var(--color-border)]"
-            : "bg-[var(--color-secondary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/20"
-        }`}
-      >
-        {isLive ? (
-          <><span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" /> Live</>
-        ) : status === "CLOSED" ? (
-          <><Trash2 className="w-2.5 h-2.5" /> Ended</>
-        ) : (
-          <><Hourglass className="w-2.5 h-2.5" /> {status || "Ready"}</>
-        )}
-      </span>
-    );
-  };
-
   const ListingImage = ({ url, icon }) =>
     url ? (
       <img src={url} alt="" className="w-full h-full object-cover" />
@@ -192,7 +169,7 @@ export default function AuctioneerManageAssets() {
                         </button>
                       </div>
                       <div className="flex items-center gap-1 text-[10px] text-[var(--color-muted)] mt-1">
-                        <MapPin className="w-2.5 h-2.5" /> {sale.location}
+                        <MapPin className="w-2.5 h-2.5" /> Client: {sale.clientName}
                         <span className="mx-1">•</span> {sale.category}
                       </div>
                       <div className="flex items-center justify-between mt-2">
@@ -217,7 +194,7 @@ export default function AuctioneerManageAssets() {
                 </div>
                 <div>
                   <h3 className="text-xs font-black tracking-wider uppercase text-[var(--color-text)]">Properties</h3>
-                  <p className="text-[10px] text-[var(--color-muted)]">{properties.length} auction listing{properties.length === 1 ? "" : "s"}</p>
+                  <p className="text-[10px] text-[var(--color-muted)]">{properties.length} property listing{properties.length === 1 ? "" : "s"}</p>
                 </div>
               </div>
               <Link
@@ -246,13 +223,15 @@ export default function AuctioneerManageAssets() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
                         <h4 className="text-xs font-bold text-[var(--color-text)] truncate">{item.title}</h4>
-                        <StatusChip status={item.status} />
+                        <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md border border-[var(--color-primary)]/20 bg-[var(--color-secondary)]/10 text-[var(--color-primary)]">
+                          {item.listingType === "LEASE" ? "For Lease" : item.listingType === "SALE" ? "For Sale" : item.status}
+                        </span>
                       </div>
                       <div className="flex items-center gap-1 text-[10px] text-[var(--color-muted)] mt-1">
-                        <MapPin className="w-2.5 h-2.5" /> {item.location}
+                        <MapPin className="w-2.5 h-2.5" /> Client: {item.clientName}
                         <span className="mx-1">•</span> {item.category}
                       </div>
-                      <div className="grid grid-cols-3 gap-2 mt-2 text-[10px]">
+                      {item.listingType === "AUCTION" ? <div className="grid grid-cols-3 gap-2 mt-2 text-[10px]">
                         <div>
                           <p className="text-[var(--color-muted)] uppercase font-bold text-[8px]">Start</p>
                           <p className="font-bold text-[var(--color-text)]">{formatMoney(item.startingBid)}</p>
@@ -262,10 +241,20 @@ export default function AuctioneerManageAssets() {
                           <p className="font-bold text-[var(--color-text)]">{formatMoney(item.reservePrice)}</p>
                         </div>
                         <div>
-                          <p className="text-[var(--color-muted)] uppercase font-bold text-[8px]">Fee</p>
-                          <p className="font-bold text-[var(--color-primary)]">{formatMoney(item.biddingFee)}</p>
+                          <p className="text-[var(--color-muted)] uppercase font-bold text-[8px]">Entry fee</p>
+                          <p className="font-bold text-[var(--color-primary)]">{formatMoney(item.entryFee)}</p>
                         </div>
-                      </div>
+                        <div>
+                          <p className="text-[var(--color-muted)] uppercase font-bold text-[8px]">Bidding deposit</p>
+                          <p className="font-bold text-[var(--color-primary)]">{formatMoney(item.biddingDeposit)}</p>
+                        </div>
+                      </div> : (
+                        <div className="mt-2 text-[10px]">
+                          <p className="text-[var(--color-muted)] uppercase font-bold text-[8px]">{item.listingType === "LEASE" ? "Monthly rent" : "Asking price"}</p>
+                          <p className="font-bold text-[var(--color-primary)]">{formatMoney(item.listingType === "LEASE" ? item.monthlyRent : item.askingPrice)}{item.listingType === "LEASE" ? " / month" : ""}</p>
+                          {item.listingType === "LEASE" && <p className="mt-1 text-[var(--color-muted)]">Rent due on day {item.rentDueDay} each month</p>}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}

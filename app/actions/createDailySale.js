@@ -25,16 +25,15 @@ export async function createDailySaleListing(formData) {
 
     const title = formData.get("title");
     const description = formData.get("description");
-    const location = formData.get("location");
+    const clientName = formData.get("clientName");
     const category = formData.get("category");
-    const documentUrl = formData.get("documentUrl");
     const price = parseFloat(formData.get("price"));
     const stockCount = parseInt(formData.get("stockCount") || "1", 10);
     const rawAttributes = formData.get("dynamicAttributes");
     const parsedAttributes = JSON.parse(rawAttributes || "[]");
 
-    if (!title || !description || !location || isNaN(price) || price <= 0) {
-      return { success: false, error: "Title, description, location and a valid price are required." };
+    if (!title || !description || !clientName || isNaN(price) || price <= 0) {
+      return { success: false, error: "Title, description, client name and a valid price are required." };
     }
 
     const formattedAttributes = {};
@@ -69,12 +68,14 @@ export async function createDailySaleListing(formData) {
       const [newAsset] = await tx.insert(assets).values({
         title,
         description,
-        location,
+        location: clientName,
+        clientName,
         category: category || "OTHER",
         salesType: "DAILY_SALE",
+        listingType: "SALE",
         salePrice: price,
         attributes: formattedAttributes,
-        documentUrl: documentUrl || null,
+        documentUrl: null,
         createdById: Number(session.user.id),
       }).returning();
 
