@@ -21,19 +21,23 @@ export default function LoginPage() {
 
     try {
       const result = await signIn("credentials", {
-        email,
+        email: email.trim().toLowerCase(),
         password,
         redirect: false,
       });
 
       if (result?.error) {
-        setError("Invalid email or password");
+        setError(
+          result.error === "CredentialsSignin"
+            ? "Invalid email or password"
+            : "Sign-in could not be completed. Please try again."
+        );
       } else {
         router.push("/dashboard");
         router.refresh();
       }
-    } catch (err) {
-      setError("An unexpected authentication error occurred.");
+    } catch {
+      setError("Sign-in could not be completed. Please try again.");
     } finally {
       setLoading(false);
     }

@@ -2,7 +2,7 @@ import Google from "next-auth/providers/google";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
 import bcrypt from "bcryptjs";
@@ -21,9 +21,12 @@ export const authConfig = {
     Credentials({
       name: "credentials",
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null;
+        const email = typeof credentials?.email === "string" ? credentials.email.trim().toLowerCase() : "";
+        if (!email || !credentials?.password) return null;
 
-        const [user] = await db.select().from(users).where(eq(users.email, credentials.email)).limit(1);
+        const [user] = await db.select().from(users)
+          .where(sql`lower(trim(${users.email})) = ${email}`)
+          .limit(1);
 
         if (!user?.password?.startsWith("$2")) return null;
         const isPasswordValid = await bcrypt.compare(credentials.password, user.password);
@@ -43,12 +46,15 @@ export const authConfig = {
     async signIn({ user, account }) {
       if (account?.provider !== "google" || !user.email) return true;
 
-      const [existingUser] = await db.select().from(users).where(eq(users.email, user.email)).limit(1);
+      const email = user.email.trim().toLowerCase();
+      const [existingUser] = await db.select().from(users)
+        .where(sql`lower(trim(${users.email})) = ${email}`)
+        .limit(1);
       if (existingUser) return true;
 
       await db.insert(users).values({
         name: user.name || user.email,
-        email: user.email,
+        email,
         password: `oauth:${randomUUID()}`,
         phoneNumber: "",
         isVerified: true,
@@ -63,7 +69,10 @@ export const authConfig = {
       }
 
       if (account?.provider === "google" && token.email) {
-        const [dbUser] = await db.select().from(users).where(eq(users.email, token.email)).limit(1);
+        const email = token.email.trim().toLowerCase();
+        const [dbUser] = await db.select().from(users)
+          .where(sql`lower(trim(${users.email})) = ${email}`)
+          .limit(1);
         if (dbUser) {
           token.id = String(dbUser.id);
           token.role = dbUser.role;
