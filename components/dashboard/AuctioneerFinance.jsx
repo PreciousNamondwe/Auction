@@ -49,10 +49,11 @@ export default function AuctioneerFinance({ view = "payments" }) {
   }
 
   const cards = [
-    ["Total recorded revenue", summary.totalRevenue, Wallet],
+    ["Total payments received", summary.totalRevenue, Wallet],
     ["Daily sales revenue", summary.dailySalesRevenue, BarChart3],
     ["Property sales revenue", summary.propertySalesRevenue, BarChart3],
-    ["Auction access fees", summary.auctionAccessRevenue, Wallet],
+    ["Auction entry fees", summary.entryFeeRevenue, Wallet],
+    ["Bidding funds / security deposits", summary.biddingDepositRevenue, Wallet],
   ];
 
   return (
@@ -69,7 +70,7 @@ export default function AuctioneerFinance({ view = "payments" }) {
         </button>
       </header>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {cards.map(([label, value, Icon]) => (
           <article key={label} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4">
             <Icon className="mb-3 h-4 w-4 text-[var(--color-primary)]" />
@@ -80,10 +81,59 @@ export default function AuctioneerFinance({ view = "payments" }) {
       </div>
 
       {isReport && (
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4">
-          <p className="text-xs text-[var(--color-muted)]">Items sold</p>
-          <p className="mt-1 text-xl font-bold text-[var(--color-text)]">{summary.goodsSold}</p>
-          <p className="mt-3 text-xs text-[var(--color-muted)]">Recorded transactions: {summary.transactionCount}</p>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4">
+            <h2 className="text-sm font-bold text-[var(--color-text)]">Sales summary</h2>
+            <dl className="mt-3 space-y-2 text-xs">
+              <div className="flex justify-between gap-4"><dt className="text-[var(--color-muted)]">Goods sold</dt><dd className="font-semibold text-[var(--color-text)]">{summary.goodsSold}</dd></div>
+              <div className="flex justify-between gap-4"><dt className="text-[var(--color-muted)]">Properties sold</dt><dd className="font-semibold text-[var(--color-text)]">{summary.propertiesSold}</dd></div>
+              <div className="flex justify-between gap-4"><dt className="text-[var(--color-muted)]">Recorded transactions</dt><dd className="font-semibold text-[var(--color-text)]">{summary.transactionCount}</dd></div>
+            </dl>
+          </div>
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4">
+            <h2 className="text-sm font-bold text-[var(--color-text)]">Goods sold by category</h2>
+            {summary.dailySalesByCategory.length === 0 ? (
+              <p className="mt-3 text-xs text-[var(--color-muted)]">No daily sale purchases have been completed yet.</p>
+            ) : (
+              <ul className="mt-3 space-y-2">
+                {summary.dailySalesByCategory.map((item) => (
+                  <li key={item.category} className="flex justify-between gap-4 text-xs">
+                    <span className="text-[var(--color-muted)]">{item.category} · {item.quantity} sold</span>
+                    <span className="font-semibold text-[var(--color-text)]">{amount(item.revenue)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 lg:col-span-2">
+            <h2 className="text-sm font-bold text-[var(--color-text)]">Goods sold</h2>
+            {summary.dailySalesByItem.length === 0 ? (
+              <p className="mt-3 text-xs text-[var(--color-muted)]">No daily sale purchases have been completed yet.</p>
+            ) : (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[480px] text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-[var(--color-border)] text-[10px] uppercase text-[var(--color-muted)]">
+                      <th className="py-2">Item</th>
+                      <th className="py-2">Category</th>
+                      <th className="py-2">Units sold</th>
+                      <th className="py-2 text-right">Revenue</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.dailySalesByItem.map((item) => (
+                      <tr key={`${item.title}-${item.category}`} className="border-b border-[var(--color-border)] last:border-0">
+                        <td className="py-2 font-semibold text-[var(--color-text)]">{item.title}</td>
+                        <td className="py-2 text-[var(--color-muted)]">{item.category}</td>
+                        <td className="py-2 text-[var(--color-muted)]">{item.quantity}</td>
+                        <td className="py-2 text-right font-semibold text-[var(--color-text)]">{amount(item.revenue)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -118,7 +168,7 @@ export default function AuctioneerFinance({ view = "payments" }) {
           </table>
         )}
       </div>
-      <p className="text-[10px] text-[var(--color-muted)]">Revenue reflects completed payments recorded in TrustBid; auction winning bids are not included until paid.</p>
+      <p className="text-[10px] text-[var(--color-muted)]">Totals reflect completed payments recorded in TrustBid. Bidding security deposits are shown as payments received and may not represent recognized revenue; winning bids are excluded until paid.</p>
     </section>
   );
 }

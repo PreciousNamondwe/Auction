@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { assets, bids, dailySales } from "@/lib/db/schema";
-import { and, desc, eq, ilike, or } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, or } from "drizzle-orm";
 
 /**
  * GET /api/marketplace?tab=daily-sales|properties&q=search+term
@@ -84,11 +84,12 @@ export async function GET(request) {
       return NextResponse.json({ success: true, tab, count: items.length, items });
     }
 
-    // ── PROPERTIES: land & buildings, searchable by location ──
+    // ── PROPERTIES: sale and lease listings; auctions are shown on the auction floor ──
     const properties = await db.query.assets.findMany({
       where: and(
         eq(assets.isSold, false),
         eq(assets.salesType, "PROPERTY"),
+        inArray(assets.listingType, ["SALE", "LEASE"]),
         ...(searchFilter ? [searchFilter] : []),
         ...(locationFilter ? [ilike(assets.location, `%${locationFilter}%`)] : []),
       ),

@@ -28,7 +28,12 @@ export default async function DashboardPage() {
       orderBy: [desc(auctionItems.createdAt)],
     });
 
-    serializedAuctionItems = rawAuctionItems.map((item) => ({
+    serializedAuctionItems = rawAuctionItems
+      .filter((item) =>
+        item.asset?.createdById === user.id &&
+        item.asset?.listingType === "AUCTION"
+      )
+      .map((item) => ({
       id: Number(item.id),
       assetId: Number(item.assetId),
       reservePrice: item.reservePrice ? Number(item.reservePrice) : 0,
@@ -50,7 +55,7 @@ export default async function DashboardPage() {
         createdAt: item.asset.createdAt.toISOString(),
         updatedAt: item.asset.updatedAt.toISOString(),
       } : null,
-    }));
+      }));
   }
 
   return (

@@ -43,7 +43,7 @@ export async function getAuctionAccessStatus(auctionItemId) {
     }
 
     const cleanId = Number(auctionItemId);
-    if (isNaN(cleanId)) {
+    if (!Number.isInteger(cleanId) || cleanId <= 0) {
       return { success: false, error: "Invalid auction item ID." };
     }
 
@@ -57,11 +57,37 @@ export async function getAuctionAccessStatus(auctionItemId) {
         liveRoomId: true,
         startingBid: true,
       },
-      with: { asset: { columns: { title: true, location: true } } },
+      with: { asset: { columns: { title: true, location: true, createdById: true, listingType: true } } },
     });
 
     if (!item) {
       return { success: false, error: "Auction item not found." };
+    }
+    if (item.asset?.listingType !== "AUCTION") {
+      return { success: false, error: "This listing is not an auction." };
+    }
+
+    const isOwner = session.user.role === "AUCTIONEER" &&
+      item.asset.createdById === Number(session.user.id);
+    if (session.user.role === "ADMIN" || isOwner) {
+      return {
+        success: true,
+        data: {
+          auctionItemId: item.id,
+          status: item.status,
+          liveRoomId: item.liveRoomId,
+          itemTitle: item.asset?.title || "Auction Lot",
+          location: item.asset?.location || "",
+          startingBid: Number(item.startingBid),
+          entryFee: getRequiredAmount(item.depositAmount, DEFAULT_ENTRY_FEE),
+          biddingDeposit: getRequiredAmount(item.biddingFee, DEFAULT_BIDDING_DEPOSIT),
+          entryFeePaid: true,
+          biddingDepositPaid: true,
+          nextStep: "ACCESS_GRANTED",
+          pendingEntryFeeRef: null,
+          pendingBiddingDepositRef: null,
+        },
+      };
     }
 
     const accessPayments = await db.select().from(auctionAccessPayments).where(and(
@@ -127,8 +153,18 @@ async function startAccessFeePayment(auctionItemId, feeType) {
     const item = await db.query.auctionItems.findFirst({
       where: eq(auctionItems.id, cleanId),
       columns: feeType === "BIDDING_DEPOSIT" ? { biddingFee: true } : { depositAmount: true },
+      with: { asset: { columns: { createdById: true, listingType: true } } },
     });
     if (!item) return { success: false, error: "Auction item not found." };
+    if (item.asset?.listingType !== "AUCTION") {
+      return { success: false, error: "Access fees are only available for auction listings." };
+    }
+    if (
+      session.user.role === "ADMIN" ||
+      (session.user.role === "AUCTIONEER" && item.asset.createdById === Number(session.user.id))
+    ) {
+      return { success: false, error: "The auction creator and administrators do not need to pay access fees." };
+    }
 
     const amount = feeType === "BIDDING_DEPOSIT"
       ? getRequiredAmount(item.biddingFee, DEFAULT_BIDDING_DEPOSIT)
@@ -195,8 +231,23 @@ export async function startBiddingDepositPayment(auctionItemId) {
     }
 
     const cleanId = Number(auctionItemId);
-    if (isNaN(cleanId)) {
+    if (!Number.isInteger(cleanId) || cleanId <= 0) {
       return { success: false, error: "Invalid auction item ID." };
+    }
+
+    const item = await db.query.auctionItems.findFirst({
+      where: eq(auctionItems.id, cleanId),
+      with: { asset: { columns: { createdById: true, listingType: true } } },
+    });
+    if (!item) return { success: false, error: "Auction item not found." };
+    if (item.asset?.listingType !== "AUCTION") {
+      return { success: false, error: "Access fees are only available for auction listings." };
+    }
+    if (
+      session.user.role === "ADMIN" ||
+      (session.user.role === "AUCTIONEER" && item.asset.createdById === Number(session.user.id))
+    ) {
+      return { success: false, error: "The auction creator and administrators do not need to pay access fees." };
     }
 
     const [entryFee] = await db.select().from(auctionAccessPayments).where(and(

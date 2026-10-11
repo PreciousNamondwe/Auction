@@ -26,6 +26,8 @@ export async function createAssetAndAuction(formData) {
     const askingPrice = Number(formData.get("askingPrice"));
     const monthlyRent = Number(formData.get("monthlyRent"));
     const rentDueDay = Number(formData.get("rentDueDay"));
+    const requestedStartTime = formData.get("startTime");
+    const requestedEndTime = formData.get("endTime");
 
     if (session.user.role !== "AUCTIONEER" && session.user.role !== "ADMIN") {
       throw new Error("Only auctioneers can create property listings.");
@@ -43,6 +45,23 @@ export async function createAssetAndAuction(formData) {
       !Number.isFinite(Number(biddingDeposit)) || Number(biddingDeposit) <= 0
     )) {
       throw new Error("Enter valid auction prices and fees.");
+    }
+    if (listingType === "AUCTION" && Number(biddingDeposit) <= Number(startingBid)) {
+      throw new Error("Bidding funds/security deposit must exceed the starting bid so bidders can place a bid.");
+    }
+    let auctionStartTime = new Date();
+    let auctionEndTime = new Date(Date.now() + 4 * 60 * 60 * 1000);
+    if (listingType === "AUCTION" && (requestedStartTime || requestedEndTime)) {
+      auctionStartTime = new Date(requestedStartTime);
+      auctionEndTime = new Date(requestedEndTime);
+      if (
+        Number.isNaN(auctionStartTime.getTime()) ||
+        Number.isNaN(auctionEndTime.getTime()) ||
+        auctionStartTime <= new Date() ||
+        auctionEndTime <= auctionStartTime
+      ) {
+        throw new Error("Choose a future auction start and an end time after it.");
+      }
     }
     if (listingType === "SALE" && (!Number.isFinite(askingPrice) || askingPrice <= 0)) {
       throw new Error("Enter a valid asking price.");
@@ -111,7 +130,8 @@ export async function createAssetAndAuction(formData) {
         reservePrice: isAuction ? Number(reservePrice) : displayPrice,
         depositAmount: isAuction ? Number(entryFee) : 0,
         biddingFee: isAuction ? Number(biddingDeposit) : 0,
-        endTime: new Date(Date.now() + (isAuction ? 4 * 60 * 60 * 1000 : 365 * 24 * 60 * 60 * 1000)),
+        startTime: isAuction ? auctionStartTime : new Date(),
+        endTime: isAuction ? auctionEndTime : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
         status: isAuction ? "UPCOMING" : "CLOSED",
       }).returning();
 

@@ -5,7 +5,7 @@ import { AccessToken } from "livekit-server-sdk";
 import { auth } from "../../auth";
 import { db } from "@/lib/db";
 import { auctionItems, bids } from "@/lib/db/schema";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import Pusher from "pusher";
 import { hasClearedAuctionGate } from "@/app/actions/auctionAccess";
 
@@ -27,13 +27,28 @@ export async function approveAndStartLiveAuction(auctionItemId) {
       return { success: false, error: "Authentication verification rejected." };
     }
 
-    if (session.user.role !== "AUCTIONEER" && session.user.role !== "ADMIN") {
-      return { success: false, error: "Access Denied: Only certified auctioneers can spin up live lots." };
+    if (session.user.role !== "ADMIN") {
+      return { success: false, error: "Access Denied: Only administrators can approve auction lots." };
     }
 
     const cleanId = Number(auctionItemId);
-    if (isNaN(cleanId)) {
+    if (!Number.isInteger(cleanId) || cleanId <= 0) {
       return { success: false, error: "Provided auction item ID is invalid." };
+    }
+
+    const itemDetails = await db.query.auctionItems.findFirst({
+      where: eq(auctionItems.id, cleanId),
+      with: {
+        asset: true,
+        images: { where: (image, { eq }) => eq(image.isPrimary, true), limit: 1 },
+      },
+    });
+    if (!itemDetails) return { success: false, error: "Auction item not found." };
+    if (itemDetails.asset?.listingType !== "AUCTION") {
+      return { success: false, error: "Only auction listings can be approved for live bidding." };
+    }
+    if (itemDetails.startTime > new Date() || itemDetails.endTime <= new Date()) {
+      return { success: false, error: "This auction can only be started during its scheduled time." };
     }
 
     const generatedRoomId = `room-lot-${cleanId}-${Date.now()}`;
@@ -44,13 +59,6 @@ export async function approveAndStartLiveAuction(auctionItemId) {
       }).where(eq(auctionItems.id, cleanId)).returning();
 
     if (!updatedItem) return { success: false, error: "Auction item not found." };
-    const itemDetails = await db.query.auctionItems.findFirst({
-      where: eq(auctionItems.id, cleanId),
-      with: {
-        asset: true,
-        images: { where: (image, { eq }) => eq(image.isPrimary, true), limit: 1 },
-      },
-    });
 
     const primaryImageUrl = itemDetails.images[0]?.url || "/placeholder-property.jpg";
 
@@ -95,10 +103,18 @@ export async function getLiveKitToken(roomId, auctionItemId) {
 
     const item = await db.query.auctionItems.findFirst({
       where: eq(auctionItems.id, cleanId),
-      columns: { status: true, liveRoomId: true },
+      columns: { status: true, liveRoomId: true, startTime: true, endTime: true },
+      with: { asset: { columns: { createdById: true, listingType: true } } },
     });
     if (!item || (item.status !== "ACTIVE" && item.status !== "LIVE")) {
       return { success: false, error: "This auction is not live." };
+    }
+    const now = new Date();
+    if (item.startTime > now || item.endTime <= now) {
+      return { success: false, error: "This auction is outside its scheduled live time." };
+    }
+    if (item.asset?.listingType !== "AUCTION") {
+      return { success: false, error: "This listing is not an auction." };
     }
     if (
       (item.liveRoomId && item.liveRoomId !== roomId) ||
@@ -108,7 +124,9 @@ export async function getLiveKitToken(roomId, auctionItemId) {
     }
 
     const role = session.user.role || "BIDDER";
-    if (role !== "ADMIN") {
+    const isOwner = role === "AUCTIONEER" && item.asset.createdById === Number(session.user.id);
+    const canManageRoom = role === "ADMIN" || isOwner;
+    if (!canManageRoom) {
       const access = await hasClearedAuctionGate(cleanId);
       if (!access.success) return { success: false, error: access.error };
       if (!access.cleared) {
@@ -129,7 +147,7 @@ export async function getLiveKitToken(roomId, auctionItemId) {
       name: session.user.name || `${role} Member`,
     });
 
-    if (role === "AUCTIONEER" || role === "ADMIN") {
+    if (canManageRoom) {
       at.addGrant({
         roomJoin: true,
         room: roomId,
@@ -190,11 +208,22 @@ export async function submitLiveBid(auctionItemId, amount) {
     if (targetItem.status !== "ACTIVE" && targetItem.status !== "LIVE") {
       return { success: false, error: `Bidding session is currently not accepting active offers. (Current Status: ${targetItem.status})` };
     }
+    const now = new Date();
+    if (targetItem.startTime > now || targetItem.endTime <= now) {
+      return { success: false, error: "Bidding is only available during the scheduled auction time." };
+    }
 
     const access = await hasClearedAuctionGate(targetLotId);
     if (!access.success) return { success: false, error: access.error };
     if (!access.cleared) {
       return { success: false, error: "Pay the bidding fee and security deposit before placing a bid." };
+    }
+    const maximumBid = Number(access.data.biddingDeposit);
+    if (!Number.isFinite(maximumBid) || maximumBid <= 0) {
+      return { success: false, error: "This auction has an invalid bidding-funds limit. Contact the auctioneer." };
+    }
+    if (incomingAmount > maximumBid) {
+      return { success: false, error: `Bid cannot exceed your paid bidding deposit of MWK ${maximumBid.toLocaleString()}.` };
     }
 
     const highestBidValue = targetItem.bids[0]?.amount ? Number(targetItem.bids[0].amount) : Number(targetItem.startingBid);
@@ -236,16 +265,8 @@ export async function getAuctionItemDetails(auctionItemId) {
     }
 
     const cleanId = Number(auctionItemId);
-    if (isNaN(cleanId)) {
+    if (!Number.isInteger(cleanId) || cleanId <= 0) {
       return { success: false, error: "Invalid auction item ID." };
-    }
-
-    if (session.user.role !== "ADMIN") {
-      const access = await hasClearedAuctionGate(cleanId);
-      if (!access.success) return { success: false, error: access.error };
-      if (!access.cleared) {
-        return { success: false, error: "Pay the bidding fee and security deposit before entering this auction." };
-      }
     }
 
     const item = await db.query.auctionItems.findFirst({
@@ -266,6 +287,19 @@ export async function getAuctionItemDetails(auctionItemId) {
 
     if (!item) {
       return { success: false, error: "Auction item not found." };
+    }
+    if (item.asset?.listingType !== "AUCTION") {
+      return { success: false, error: "This listing is not an auction." };
+    }
+
+    const isOwner = session.user.role === "AUCTIONEER" &&
+      item.asset.createdById === Number(session.user.id);
+    if (session.user.role !== "ADMIN" && !isOwner) {
+      const access = await hasClearedAuctionGate(cleanId);
+      if (!access.success) return { success: false, error: access.error };
+      if (!access.cleared) {
+        return { success: false, error: "Pay the bidding fee and security deposit before entering this auction." };
+      }
     }
 
     // Format bids for frontend
@@ -288,6 +322,7 @@ export async function getAuctionItemDetails(auctionItemId) {
         startingBid: Number(item.startingBid),
         reservePrice: Number(item.reservePrice),
         depositAmount: Number(item.depositAmount),
+        maximumBid: Number(item.biddingFee),
         startTime: item.startTime.toISOString(),
         endTime: item.endTime.toISOString(),
         liveRoomId: item.liveRoomId,
@@ -328,7 +363,10 @@ export async function getActiveLiveAuctions() {
     }
 
     const activeItems = await db.query.auctionItems.findMany({
-      where: eq(auctionItems.status, "ACTIVE"),
+      where: and(
+        inArray(auctionItems.status, ["UPCOMING", "ACTIVE", "LIVE"]),
+        gt(auctionItems.endTime, new Date()),
+      ),
       with: {
         asset: true,
         images: {
@@ -340,10 +378,15 @@ export async function getActiveLiveAuctions() {
 
     return {
       success: true,
-      items: activeItems.map(item => ({
+      items: activeItems
+        .filter((item) => item.asset?.listingType === "AUCTION")
+        .map(item => ({
         id: String(item.id),
         auctionItemId: item.id,
         roomId: item.liveRoomId,
+        status: item.status,
+        startTime: item.startTime.toISOString(),
+        endTime: item.endTime.toISOString(),
         title: "🚨 Live Auction Approved & Open",
         itemTitle: item.asset?.title || "Unnamed Asset",
         description: item.asset?.description || "No asset description listed.",
@@ -355,6 +398,14 @@ export async function getActiveLiveAuctions() {
         imageUrl: item.images[0]?.url || "/placeholder-property.jpg",
         createdAt: item.updatedAt.toISOString()
       }))
+        .sort((left, right) => {
+          const leftUpcoming = left.status === "UPCOMING";
+          const rightUpcoming = right.status === "UPCOMING";
+          if (leftUpcoming !== rightUpcoming) return leftUpcoming ? -1 : 1;
+          const leftTime = leftUpcoming ? left.startTime : left.endTime;
+          const rightTime = rightUpcoming ? right.startTime : right.endTime;
+          return new Date(leftTime) - new Date(rightTime);
+        })
     };
   } catch (error) {
     console.error("❌ Active Lot Catch-up Failure:", error);
@@ -372,10 +423,35 @@ export async function updateAuctionToLiveDirectly(itemId, computedRoomId) {
       return { success: false, error: "Unauthorized structural database update." };
     }
 
+    const cleanId = Number(itemId);
+    if (!Number.isInteger(cleanId) || cleanId <= 0 || typeof computedRoomId !== "string" || !computedRoomId.trim()) {
+      return { success: false, error: "Invalid auction launch parameters." };
+    }
+
+    const item = await db.query.auctionItems.findFirst({
+      where: eq(auctionItems.id, cleanId),
+      columns: { id: true, startTime: true, endTime: true },
+      with: { asset: { columns: { createdById: true, listingType: true } } },
+    });
+    if (!item) return { success: false, error: "Auction item not found." };
+    if (item.asset?.listingType !== "AUCTION") {
+      return { success: false, error: "Only auction listings can be launched." };
+    }
+    if (
+      session.user.role !== "ADMIN" &&
+      item.asset.createdById !== Number(session.user.id)
+    ) {
+      return { success: false, error: "You can only launch auctions that you created." };
+    }
+    const now = new Date();
+    if (item.startTime > now || item.endTime <= now) {
+      return { success: false, error: "This auction can only be started during its scheduled time." };
+    }
+
     const [record] = await db.update(auctionItems).set({
         status: "ACTIVE", 
         liveRoomId: computedRoomId,
-      }).where(eq(auctionItems.id, Number(itemId))).returning();
+      }).where(eq(auctionItems.id, cleanId)).returning();
 
     if (!record) return { success: false, error: "Auction item not found." };
 
@@ -396,8 +472,28 @@ export async function closeLiveAuctionDirectly(itemId) {
       return { success: false, error: "Unauthorized structural database update." };
     }
 
+    const cleanId = Number(itemId);
+    if (!Number.isInteger(cleanId) || cleanId <= 0) {
+      return { success: false, error: "Invalid auction item ID." };
+    }
+
+    const item = await db.query.auctionItems.findFirst({
+      where: eq(auctionItems.id, cleanId),
+      with: { asset: { columns: { createdById: true, listingType: true } } },
+    });
+    if (!item) return { success: false, error: "Auction item not found." };
+    if (item.asset?.listingType !== "AUCTION") {
+      return { success: false, error: "Only auction listings can be closed." };
+    }
+    if (
+      session.user.role !== "ADMIN" &&
+      item.asset.createdById !== Number(session.user.id)
+    ) {
+      return { success: false, error: "You can only close auctions that you created." };
+    }
+
     const [record] = await db.update(auctionItems).set({ status: "CLOSED" })
-      .where(eq(auctionItems.id, Number(itemId))).returning();
+      .where(eq(auctionItems.id, cleanId)).returning();
 
     if (!record) return { success: false, error: "Auction item not found." };
 

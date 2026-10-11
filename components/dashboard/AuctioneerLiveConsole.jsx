@@ -58,8 +58,10 @@ export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate
       
       const computedRoomId = `room-lot-${itemId}-${Date.now()}`;
       const updateResult = await updateAuctionToLiveDirectly(itemId, computedRoomId);
-      if (updateResult?.success === false) throw new Error(updateResult.error);
-      
+      if (!updateResult?.success) {
+        throw new Error(updateResult?.error || "Could not start this auction.");
+      }
+
       const updated = itemsList.map(item => 
         item.id === Number(itemId) ? { ...item, status: "ACTIVE", liveRoomId: computedRoomId } : item
       );
@@ -101,7 +103,10 @@ export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate
     if (!confirmation) return;
     try {
       setIsActionLoadingId(itemId);
-      await closeLiveAuctionDirectly(itemId);
+      const result = await closeLiveAuctionDirectly(itemId);
+      if (!result?.success) {
+        throw new Error(result?.error || "Could not close this auction.");
+      }
       const updated = itemsList.map(item => item.id === itemId ? { ...item, status: "CLOSED" } : item);
       syncItemsList(updated);
       alert(`🛑 Lot #${itemId} is now CLOSED.`);

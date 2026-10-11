@@ -87,7 +87,7 @@ const FeeStepRow = ({ label, amount, done, active, busy, pending, onPay }) => (
  *
  * Document flow (enforced in order):
  *   Step 1 — pay the BIDDING FEE.
- *   Step 2 — on confirmation, pay the SECURITY DEPOSIT (guarantee the bid is honoured).
+ *   Step 2 — on confirmation, pay the bidding funds/security deposit.
  *   Step 3 — only after BOTH payments are confirmed does the system direct the
  *            user to the auction room.
  */
@@ -285,7 +285,7 @@ export default function AuctionAccessGate({ open, onClose, auctionItemId, roomId
                 <ShieldCheck className="w-4 h-4 text-[var(--color-primary)] mt-0.5 shrink-0" />
                 <p className="text-[11px] text-[var(--color-muted)] leading-relaxed">
                   To enter this auction room, pay the <span className="font-bold text-[var(--color-text)]">entry fee</span> first, then the{" "}
-                  <span className="font-bold text-[var(--color-text)]">bidding fee / security deposit</span> used to secure your bidding funds. Both payments
+                  <span className="font-bold text-[var(--color-text)]">bidding funds / security deposit</span> used during auction bidding. Both payments
                   are confirmed before the room opens for you.
                 </p>
               </div>
@@ -301,7 +301,7 @@ export default function AuctionAccessGate({ open, onClose, auctionItemId, roomId
               />
 
               <FeeStepRow
-                label="Bidding Fee / Security Deposit"
+                label="Bidding Funds / Security Deposit"
                 amount={status?.biddingDeposit ?? 0}
                 done={biddingDepositDone}
                 active={nextStep === "BIDDING_DEPOSIT"}

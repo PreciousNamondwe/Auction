@@ -70,8 +70,8 @@ export default function PaymentHistory({ role }) {
     ["completed", "success"].includes(payment.gatewayStatus.toLowerCase());
   const getPurposeLabel = (purpose) => ({
     ENTRY_FEE: "Auction entry fee",
-    BIDDING_DEPOSIT: "Auction bidding fee / security deposit",
-    BIDDING_FEE: "Auction bidding fee / security deposit",
+    BIDDING_DEPOSIT: "Auction bidding funds / security deposit",
+    BIDDING_FEE: "Auction bidding funds / security deposit",
     SECURITY_DEPOSIT: "Auction entry fee",
     DAILY_SALE_PURCHASE: "Daily sale purchase",
     PROPERTY_PURCHASE: "Property purchase",

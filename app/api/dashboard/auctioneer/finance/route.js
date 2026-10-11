@@ -19,6 +19,7 @@ export async function GET() {
       id: sales.id,
       kind: sales.kind,
       title: assets.title,
+      category: assets.category,
       amount: sales.amount,
       quantity: sales.quantity,
       buyerName: users.name,
@@ -54,6 +55,7 @@ export async function GET() {
       id: `sale-${row.id}`,
       type: row.kind === "PROPERTY_PURCHASE" ? "Property sale" : "Daily sale",
       title: row.title,
+      category: row.category,
       amount: Number(row.amount),
       quantity: row.quantity,
       buyerName: row.buyerName,
@@ -62,7 +64,9 @@ export async function GET() {
     }));
     const feeTransactions = feeRows.map((row) => ({
       id: `fee-${row.id}`,
-      type: row.feeType === "ENTRY_FEE" ? "Auction entry fee" : "Auction bidding fee / security deposit",
+      type: row.feeType === "ENTRY_FEE"
+        ? "Auction entry fee"
+        : "Auction bidding funds / security deposit",
       title: row.title,
       amount: Number(row.amount),
       quantity: 1,
@@ -75,7 +79,39 @@ export async function GET() {
     const revenueFor = (type) => saleTransactions
       .filter((row) => row.type === type)
       .reduce((sum, row) => sum + row.amount, 0);
-    const auctionAccessRevenue = feeTransactions.reduce((sum, row) => sum + row.amount, 0);
+    const entryFeeRevenue = feeTransactions
+      .filter((row) => row.type === "Auction entry fee")
+      .reduce((sum, row) => sum + row.amount, 0);
+    const biddingDepositRevenue = feeTransactions
+      .filter((row) => row.type === "Auction bidding funds / security deposit")
+      .reduce((sum, row) => sum + row.amount, 0);
+    const dailySalesByCategory = Object.values(saleTransactions
+      .filter((row) => row.type === "Daily sale")
+      .reduce((groups, row) => {
+        const category = row.category || "OTHER";
+        const current = groups[category] || { category, quantity: 0, revenue: 0 };
+        current.quantity += row.quantity;
+        current.revenue += row.amount;
+        groups[category] = current;
+        return groups;
+      }, {}))
+      .sort((left, right) => right.revenue - left.revenue);
+    const dailySalesByItem = Object.values(saleTransactions
+      .filter((row) => row.type === "Daily sale")
+      .reduce((groups, row) => {
+        const key = `${row.title}:${row.category || "OTHER"}`;
+        const current = groups[key] || {
+          title: row.title,
+          category: row.category || "OTHER",
+          quantity: 0,
+          revenue: 0,
+        };
+        current.quantity += row.quantity;
+        current.revenue += row.amount;
+        groups[key] = current;
+        return groups;
+      }, {}))
+      .sort((left, right) => right.quantity - left.quantity || right.revenue - left.revenue);
 
     return NextResponse.json({
       success: true,
@@ -85,8 +121,17 @@ export async function GET() {
           totalRevenue: transactions.reduce((sum, row) => sum + row.amount, 0),
           dailySalesRevenue: revenueFor("Daily sale"),
           propertySalesRevenue: revenueFor("Property sale"),
-          auctionAccessRevenue,
-          goodsSold: saleTransactions.reduce((sum, row) => sum + row.quantity, 0),
+          entryFeeRevenue,
+          biddingDepositRevenue,
+          auctionAccessRevenue: entryFeeRevenue + biddingDepositRevenue,
+          goodsSold: saleTransactions
+            .filter((row) => row.type === "Daily sale")
+            .reduce((sum, row) => sum + row.quantity, 0),
+          propertiesSold: saleTransactions
+            .filter((row) => row.type === "Property sale")
+            .reduce((sum, row) => sum + row.quantity, 0),
+          dailySalesByCategory,
+          dailySalesByItem,
           transactionCount: transactions.length,
         },
       },

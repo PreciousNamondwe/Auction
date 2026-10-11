@@ -9,20 +9,16 @@ import {
   Tv, 
   MapPin, 
   Loader2, 
-  ArrowUpRight,
   Gavel,
   Clock,
   Users,
   TrendingUp,
-  ChevronRight,
-  Filter,
 } from "lucide-react";
 
 export default function BidderLiveConsole({ auctionItems = [] }) {
   const router = useRouter();
   const [activeAuctions, setActiveAuctions] = useState([]);
   const [isJoiningId, setIsJoiningId] = useState(null);
-  const [filterCategory, setFilterCategory] = useState("ALL");
   const [loading, setLoading] = useState(true);
   const [gateAuction, setGateAuction] = useState(null); // auction pending fee clearance
 
@@ -55,15 +51,16 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
     return () => clearInterval(interval);
   }, [auctionItems]);
 
-  // Handle joining a live auction room — first clear the bidding fee + security deposit gate.
+  // Handle joining a live auction room — first clear the entry fee and bidding deposit.
   const handleJoinAuction = async (auction) => {
+    if (!["ACTIVE", "LIVE"].includes(auction.status)) return;
     const targetRoomId = auction.roomId || auction.id;
     const itemDbId = auction.auctionItemId || auction.id;
 
     try {
       setIsJoiningId(targetRoomId);
 
-      // Document requirement: bidding fee → security deposit → auction room.
+      // The entry fee and bidding deposit must both be paid before joining.
       const gate = await hasClearedAuctionGate(itemDbId);
       if (!gate.success) {
         throw new Error(gate.error || "Could not verify auction access payments.");
@@ -81,6 +78,9 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
       );
 
       const tokenPayload = await Promise.race([tokenPromise, timeoutPromise]);
+      if (!tokenPayload?.success) {
+        throw new Error(tokenPayload?.error || "Could not connect to the live auction.");
+      }
 
       router.push(`/auctions/live/${targetRoomId}?token=${tokenPayload.token}&id=${itemDbId}`);
     } catch (err) {
@@ -91,8 +91,8 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
     }
   };
 
-  // Called when both the bidding fee and the security deposit have been confirmed.
-  const handleAccessGranted = async (gateData) => {
+  // Called when both auction access payments have been confirmed.
+  const handleAccessGranted = async () => {
     if (!gateAuction) return;
     const targetRoomId = gateAuction.roomId;
     const itemDbId = gateAuction.auctionItemId;
@@ -104,6 +104,9 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
       );
 
       const tokenPayload = await Promise.race([tokenPromise, timeoutPromise]);
+      if (!tokenPayload?.success) {
+        throw new Error(tokenPayload?.error || "Could not connect to the live auction.");
+      }
       router.push(`/auctions/live/${targetRoomId}?token=${tokenPayload.token}&id=${itemDbId}`);
     } catch (err) {
       console.error("Post-payment join error:", err);
@@ -115,20 +118,6 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
   const handlePlaceBid = (auction) => {
     router.push(`/auctions/${auction.id || auction.auctionItemId}`);
   };
-
-  // Filter auctions
-  const filteredAuctions = activeAuctions.filter(item => {
-    const matchesCategory = filterCategory === "ALL" || 
-      item.category?.toUpperCase() === filterCategory ||
-      item.asset?.category?.toUpperCase() === filterCategory;
-
-    return matchesCategory;
-  });
-
-  // Get unique categories
-  const categories = ["ALL", ...new Set(
-    activeAuctions.map(item => item.category || item.asset?.category).filter(Boolean)
-  )];
 
   // Format time remaining
   const getTimeRemaining = (endTime) => {
@@ -152,7 +141,7 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
   return (
     <div className="space-y-6 pb-16 md:pb-6">
 
-      {/* Two-step access payment gate (bidding fee → security deposit) */}
+      {/* Two-step access payment gate (entry fee → bidding deposit) */}
       {gateAuction && (
         <AuctionAccessGate
           open={Boolean(gateAuction)}
@@ -180,36 +169,16 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
           <div className="bg-white/20 backdrop-blur-sm border border-white/30 rounded-xl px-5 py-3 shrink-0 flex items-center gap-4 self-start sm:self-center">
             <div className="text-center">
               <span className="block text-xl sm:text-2xl font-black leading-none">{activeAuctions.length}</span>
-              <span className="text-[9px] uppercase tracking-wider font-bold mt-1 block opacity-70">Active</span>
+              <span className="text-[9px] uppercase tracking-wider font-bold mt-1 block opacity-70">Listings</span>
             </div>
             <div className="w-px h-8 bg-white/30" />
             <div className="text-center">
               <span className="block text-xl sm:text-2xl font-black leading-none">
-                {activeAuctions.filter(a => a.status === "LIVE").length}
+                {activeAuctions.filter((auction) => ["ACTIVE", "LIVE"].includes(auction.status)).length}
               </span>
               <span className="text-[9px] uppercase tracking-wider font-bold mt-1 block opacity-70">Live Now</span>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Category filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
-          <Filter className="w-4 h-4 text-[var(--color-muted)] shrink-0" />
-          {categories.map(cat => (
-            <button
-              key={cat}
-              onClick={() => setFilterCategory(cat)}
-              className={`px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
-                filterCategory === cat
-                  ? "bg-[var(--color-secondary)] text-white"
-                  : "bg-[var(--color-input)] text-[var(--color-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)]"
-              }`}
-            >
-              {cat === "ALL" ? "All Items" : cat}
-            </button>
-          ))}
         </div>
       </div>
 
@@ -219,7 +188,7 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
           <div className="flex items-center gap-2">
             <Gavel className="w-4 h-4 text-[var(--color-primary)]" />
             <h3 className="text-xs font-black tracking-wider uppercase text-[var(--color-text)]">
-              Active Auctions ({filteredAuctions.length})
+              Auction Listings ({activeAuctions.length})
             </h3>
           </div>
           <div className="flex items-center gap-1 text-[10px] text-[var(--color-muted)]">
@@ -238,13 +207,11 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
               </div>
             ))}
           </div>
-        ) : filteredAuctions.length === 0 ? (
+        ) : activeAuctions.length === 0 ? (
           <div className="bg-[var(--color-card)] border border-dashed border-[var(--color-border)] rounded-2xl p-12 text-center">
             <Tv className="w-12 h-12 text-[var(--color-muted)] mx-auto mb-4 opacity-50" />
             <p className="text-sm text-[var(--color-muted)] font-medium">
-              {activeAuctions.length === 0 
-                ? "No active auctions at the moment. Check back soon!" 
-                : "No auctions match your search criteria."}
+              No scheduled or live auctions at the moment. Check back soon!
             </p>
             {activeAuctions.length === 0 && (
               <button 
@@ -257,7 +224,7 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredAuctions.map((auction) => (
+            {activeAuctions.map((auction) => (
               <div 
                 key={auction.id || auction.roomId} 
                 className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl overflow-hidden shadow-sm flex flex-col group hover:border-[var(--color-primary)]/30 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:shadow-[var(--color-primary)]/5"
@@ -279,12 +246,12 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
                   {/* Status Badge */}
                   <div className="absolute top-3 left-3">
                     <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 ${
-                      auction.status === "LIVE" 
+                      ["ACTIVE", "LIVE"].includes(auction.status)
                         ? "bg-red-500 text-white" 
                         : "bg-[var(--color-secondary)] text-white"
                     }`}>
-                      {auction.status === "LIVE" && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
-                      {auction.status || "ACTIVE"}
+                      {["ACTIVE", "LIVE"].includes(auction.status) && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                      {auction.status === "UPCOMING" ? "SCHEDULED" : auction.status || "ACTIVE"}
                     </span>
                   </div>
 
@@ -299,7 +266,9 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
                   <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between">
                     <span className="bg-[var(--color-bg)]/80 backdrop-blur-sm text-white px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 border border-[var(--color-border)]">
                       <Clock className="w-3 h-3 text-[var(--color-primary)]" />
-                      {getTimeRemaining(auction.endTime)}
+                      {auction.status === "UPCOMING"
+                        ? `Starts in ${getTimeRemaining(auction.startTime)}`
+                        : `Closes in ${getTimeRemaining(auction.endTime)}`}
                     </span>
                     <span className="bg-[var(--color-bg)]/80 backdrop-blur-sm text-white px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 border border-[var(--color-border)]">
                       <Users className="w-3 h-3 text-[var(--color-primary)]" />
@@ -341,7 +310,7 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
                       </span>
                     </div>
                     <div className="flex items-center justify-between border-t border-[var(--color-border)] pt-2">
-                      <span className="text-[10px] text-[var(--color-muted)] uppercase font-bold tracking-wider">Bidding Fee / Security Deposit</span>
+                      <span className="text-[10px] text-[var(--color-muted)] uppercase font-bold tracking-wider">Bidding Funds / Security Deposit</span>
                       <span className="text-xs font-bold text-[var(--color-text)]">
                         MWK {Number(auction.biddingFee || 5000).toLocaleString()}
                       </span>
@@ -352,12 +321,14 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
                   <div className="grid grid-cols-2 gap-2 pt-1">
                     <button
                       type="button"
-                      disabled={isJoiningId !== null}
+                      disabled={isJoiningId !== null || !["ACTIVE", "LIVE"].includes(auction.status)}
                       onClick={() => handleJoinAuction(auction)}
-                      className="bg-[var(--color-secondary)] hover:bg-[var(--color-primary)] disabled:opacity-50 text-white text-xs font-bold py-2.5 px-3 rounded-xl transition-all shadow-sm hover:shadow-lg hover:shadow-[var(--color-primary)]/20 flex items-center justify-center gap-1.5"
+                      className="bg-[var(--color-secondary)] hover:bg-[var(--color-primary)] disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold py-2.5 px-3 rounded-xl transition-all shadow-sm hover:shadow-lg hover:shadow-[var(--color-primary)]/20 flex items-center justify-center gap-1.5"
                     >
                       {isJoiningId === (auction.roomId || auction.id) ? (
                         <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Joining...</>
+                      ) : auction.status === "UPCOMING" ? (
+                        <><Clock className="w-3.5 h-3.5" /> Scheduled</>
                       ) : (
                         <><Tv className="w-3.5 h-3.5" /> Join Live</>
                       )}
@@ -365,7 +336,8 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
                     <button
                       type="button"
                       onClick={() => handlePlaceBid(auction)}
-                      className="bg-[var(--color-input)] hover:bg-[var(--color-primary)] text-[var(--color-text)] hover:text-[var(--color-bg)] text-xs font-bold py-2.5 px-3 rounded-xl transition-all border border-[var(--color-border)] hover:border-[var(--color-primary)] flex items-center justify-center gap-1.5"
+                      disabled={!["ACTIVE", "LIVE"].includes(auction.status)}
+                      className="bg-[var(--color-input)] hover:bg-[var(--color-primary)] disabled:opacity-50 disabled:cursor-not-allowed text-[var(--color-text)] hover:text-[var(--color-bg)] text-xs font-bold py-2.5 px-3 rounded-xl transition-all border border-[var(--color-border)] hover:border-[var(--color-primary)] flex items-center justify-center gap-1.5"
                     >
                       <Gavel className="w-3.5 h-3.5" /> Place Bid
                     </button>

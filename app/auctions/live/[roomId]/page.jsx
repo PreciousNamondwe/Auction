@@ -161,6 +161,10 @@ export default function LiveRoomPage({ params }) {
     e.preventDefault();
     if (!bidAmount || isNaN(Number(bidAmount))) return;
     if (isAuctionClosed) { setBidError("Auction ended."); return; }
+    if (Number(bidAmount) > Number(auctionItem.maximumBid)) {
+      setBidError(`Your maximum bid is MWK ${Number(auctionItem.maximumBid).toLocaleString()}, based on your paid bidding deposit.`);
+      return;
+    }
 
     setIsPlacingBid(true);
     setBidError("");
@@ -184,9 +188,13 @@ export default function LiveRoomPage({ params }) {
 
   const quickBid = useCallback((amount) => {
     if (isAuctionClosed) { setBidError("Auction ended."); return; }
+    if (amount > Number(auctionItem?.maximumBid)) {
+      setBidError(`Your maximum bid is MWK ${Number(auctionItem?.maximumBid).toLocaleString()}, based on your paid bidding deposit.`);
+      return;
+    }
     setBidAmount(String(amount));
     bidInputRef.current?.focus();
-  }, [isAuctionClosed]);
+  }, [auctionItem?.maximumBid, isAuctionClosed]);
 
   const handleLeaveRoom = () => router.push("/dashboard");
 
@@ -368,8 +376,13 @@ export default function LiveRoomPage({ params }) {
                 </div>
               ) : (
                 <>
+                  <p className="text-[10px] mb-3" style={{ color: "var(--color-muted)" }}>
+                    Maximum bid: <span className="font-bold" style={{ color: "var(--color-primary)" }}>
+                      MWK {Number(auctionItem.maximumBid).toLocaleString()}
+                    </span> (your paid bidding deposit)
+                  </p>
                   <div className="grid grid-cols-3 gap-2 mb-4">
-                    {[5000, 10000, 25000].map((inc) => (
+                    {[5000, 10000, 25000].filter((inc) => highestBid + inc <= Number(auctionItem.maximumBid)).map((inc) => (
                       <button key={inc} onClick={() => quickBid(highestBid + inc)}
                         className="py-2 rounded-lg text-[10px] font-bold font-mono transition-all hover:opacity-80"
                         style={{ backgroundColor: "rgba(65,147,16,0.1)", color: "var(--color-secondary)", border: "1px solid rgba(65,147,16,0.2)" }}>
@@ -390,15 +403,22 @@ export default function LiveRoomPage({ params }) {
                         className="w-full pl-11 pr-3 py-2.5 rounded-lg text-sm font-mono font-bold outline-none"
                         style={{ backgroundColor: "var(--color-input)", border: "1px solid var(--color-border)", color: "var(--color-text)" }}
                         min={highestBid + 1}
+                        max={auctionItem.maximumBid}
+                        disabled={isPlacingBid || highestBid >= Number(auctionItem.maximumBid)}
                       />
                     </div>
-                    <button type="submit" disabled={isPlacingBid || !bidAmount}
+                    <button type="submit" disabled={isPlacingBid || !bidAmount || highestBid >= Number(auctionItem.maximumBid)}
                       className="px-4 py-2.5 rounded-lg font-bold text-xs flex items-center gap-1 transition-all hover:opacity-80 disabled:opacity-40"
                       style={{ backgroundColor: "var(--color-primary)", color: "var(--color-bg)" }}>
                       {isPlacingBid ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
                       Bid
                     </button>
                   </form>
+                  {highestBid >= Number(auctionItem.maximumBid) && (
+                    <p className="mt-2 text-xs text-center" style={{ color: "var(--color-muted)" }}>
+                      The maximum bid allowed by your paid deposit has been reached.
+                    </p>
+                  )}
                 </>
               )}
 
