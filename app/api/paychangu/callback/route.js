@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { payments } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { auctionAccessPayments, payments } from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 import { createHmac } from "crypto";
 import { sendPaymentReceipt } from "@/lib/paymentReceipts";
 
@@ -13,6 +13,10 @@ export async function POST(request) {
     const signature = request.headers.get("signature");
     const payload = await request.text(); // raw body
 
+    if (!WEBHOOK_SECRET) {
+      console.error("[PayChangu Webhook] PAYCHANGU_SECRET_KEY is not configured.");
+      return NextResponse.json({ error: "Webhook verification is not configured" }, { status: 500 });
+    }
     if (!signature) {
       return NextResponse.json({ error: "Missing signature" }, { status: 400 });
     }
@@ -41,24 +45,40 @@ export async function POST(request) {
     // ── 3. Idempotency ──
     const [existing] = await db.select().from(payments).where(eq(payments.reference, tx_ref)).limit(1);
 
-    if (existing?.gatewayStatus === "completed") {
+    if (!existing) {
+      return NextResponse.json({ error: "Unknown payment reference" }, { status: 404 });
+    }
+    if (existing.gatewayStatus === "completed") {
       await sendPaymentReceipt(tx_ref);
       return NextResponse.json({ received: true, alreadyProcessed: true });
     }
 
+    if (amount != null && Number(amount) !== Number(existing.amount)) {
+      console.error("[PayChangu Webhook] Amount mismatch for payment:", tx_ref);
+      return NextResponse.json({ error: "Payment amount mismatch" }, { status: 400 });
+    }
+
     // ── 4. Map status ──
+    const normalizedStatus = String(status || "").toLowerCase();
     const mappedStatus =
-      status === "success"
+      normalizedStatus === "success"
         ? "completed"
-        : status === "failed"
+        : normalizedStatus === "failed"
         ? "failed"
-        : status || "pending";
+        : "pending";
 
     // ── 5. Update DB ──
-    await db.update(payments).set({
-        gatewayStatus: mappedStatus,
-        amount: amount ? parseFloat(amount) : existing?.amount,
-      }).where(eq(payments.reference, tx_ref));
+    await db.transaction(async (tx) => {
+      await tx.update(payments).set({ gatewayStatus: mappedStatus })
+        .where(eq(payments.reference, tx_ref));
+      await tx.update(auctionAccessPayments).set({
+        status: mappedStatus === "completed" ? "PAID" : mappedStatus === "failed" ? "FAILED" : "PENDING",
+        paidAt: mappedStatus === "completed" ? new Date() : null,
+      }).where(and(
+        eq(auctionAccessPayments.paymentRef, tx_ref),
+        eq(auctionAccessPayments.userId, existing.userId),
+      ));
+    });
 
     if (mappedStatus === "completed") {
       console.log("[PayChangu] Payment completed:", tx_ref);

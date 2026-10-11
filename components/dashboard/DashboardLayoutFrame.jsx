@@ -2,7 +2,9 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useTheme } from "@/app/providers";
+import { confirmAuctionAccessPayment, hasClearedAuctionGate } from "@/app/actions/auctionAccess";
 import { 
   LogOut, 
   Gavel,
@@ -17,6 +19,8 @@ import {
   BarChart3,
   Settings,
   Bell,
+  Sun,
+  Moon,
   Search,
   ShoppingBag,
   Home
@@ -33,14 +37,22 @@ import PaymentHistory from "@/components/dashboard/PaymentHistory";
 import Mybids from "./Mybids"
 
 export default function DashboardLayoutFrame({ user, serializedAuctionItems, isAuctioneer, forceTab = null, addListingInitialMode = "property" }) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState(forceTab || searchParams.get("tab") || "live-auctions");
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const [liveCountState, setLiveCountState] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
+  const [accessPaymentMessage, setAccessPaymentMessage] = useState("");
+  const { theme, toggleTheme } = useTheme();
 
   const dropdownRef = useRef(null);
+  const handledPaymentReturn = useRef("");
+  const returnedPaymentRef = searchParams.get("access_payment_ref");
+  const returnedAuctionId = searchParams.get("access_auction_id");
+  const returnedFeeType = searchParams.get("access_fee_type");
+  const returnedRoomId = searchParams.get("access_room_id");
 
   // Derive live count from serializedAuctionItems to avoid synchronous setState in effects.
   // Keep a state fallback for compatibility, but prefer memoized derived value.
@@ -60,6 +72,57 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, []);
+
+  useEffect(() => {
+    if (
+      !returnedPaymentRef ||
+      !returnedAuctionId ||
+      !["BIDDING_FEE", "SECURITY_DEPOSIT"].includes(returnedFeeType) ||
+      !["BIDDER", "AUCTIONEER"].includes(user?.role)
+    ) return;
+
+    const returnKey = `${returnedPaymentRef}:${returnedAuctionId}:${returnedFeeType}`;
+    if (handledPaymentReturn.current === returnKey) return;
+    handledPaymentReturn.current = returnKey;
+    let isCurrent = true;
+
+    async function verifyReturnedPayment() {
+      try {
+        const result = await confirmAuctionAccessPayment(returnedAuctionId, returnedFeeType, returnedPaymentRef);
+        if (!isCurrent) return;
+        if (!result.success) {
+          setAccessPaymentMessage(`Payment verification failed: ${result.error}`);
+        } else if (result.data?.status === "PAID") {
+          const access = await hasClearedAuctionGate(returnedAuctionId);
+          if (access.success && access.cleared && returnedRoomId) {
+            router.replace(`/auctions/live/${encodeURIComponent(returnedRoomId)}?id=${encodeURIComponent(returnedAuctionId)}`);
+            return;
+          }
+          setAccessPaymentMessage(
+            access.success && !access.cleared
+              ? "Payment confirmed. Complete any remaining access payment to enter the auction."
+              : "Payment confirmed. You can now join the live auction."
+          );
+        } else if (result.data?.status === "FAILED") {
+          setAccessPaymentMessage("PayChangu reported that the payment failed. Please try again.");
+        } else {
+          setAccessPaymentMessage("Payment is still processing. Rejoin the auction to check again.");
+        }
+      } catch (error) {
+        if (isCurrent) {
+          console.error("[Auction access return]", error);
+          setAccessPaymentMessage("Could not verify the payment. Rejoin the auction to check again.");
+        }
+      } finally {
+        if (isCurrent) router.replace("/dashboard?tab=live-auctions");
+      }
+    }
+    verifyReturnedPayment();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [returnedPaymentRef, returnedAuctionId, returnedFeeType, returnedRoomId, user?.role, router]);
 
   const userInitials = user?.name ? user.name.substring(0, 2).toUpperCase() : "OP";
 
@@ -197,6 +260,16 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
               {getTabLabel(activeTab)}
             </span>
 
+            <button
+              type="button"
+              onClick={toggleTheme}
+              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+              title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+              className="w-9 h-9 rounded-xl bg-[var(--color-input)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]/30 transition-all duration-300"
+            >
+              {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
+
             {/* Notification Bell */}
             <button className="relative w-9 h-9 rounded-xl bg-[var(--color-input)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]/30 transition-all duration-300">
               <Bell className="w-4 h-4" />
@@ -261,6 +334,11 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
         {/* DYNAMIC CONTENT ROUTER */}
         <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6 lg:p-8 bg-[var(--color-bg)]">
           <div className="mx-auto w-full max-w-7xl">
+            {accessPaymentMessage && (
+              <p className="mb-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 text-sm text-[var(--color-text)]" role="status">
+                {accessPaymentMessage}
+              </p>
+            )}
 
             {/* Dashboard Overview */}
             {activeTab === "dashboard" && (
@@ -353,9 +431,9 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
               <AuctioneerAddListing initialMode={addListingInitialMode} />
             )}
 
-            {/* Payments & Deposits */}
+            {/* Payments & Receipts */}
             {activeTab === "payments" && (
-              <PaymentHistory />
+              <PaymentHistory role={user?.role} />
             )}
 
             {/* Settings */}
@@ -509,7 +587,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
           }`}
         >
           <Wallet className="w-5 h-5 mb-0.5" />
-          <span className="text-[10px] tracking-tight">Pay</span>
+          <span className="text-[10px] tracking-tight">History</span>
         </button>
 
       </div>

@@ -72,7 +72,7 @@ export async function createAssetAndAuction(formData) {
         startingBid: parseFloat(startingBid),
         reservePrice: parseFloat(reservePrice),
         depositAmount: parseFloat(depositAmount),
-        biddingFee: biddingFee ? parseFloat(biddingFee) : 0,
+        biddingFee: biddingFee ? parseFloat(biddingFee) : 5000,
         endTime: new Date(Date.now() + 4 * 60 * 60 * 1000),
         status: "UPCOMING",
       }).returning();

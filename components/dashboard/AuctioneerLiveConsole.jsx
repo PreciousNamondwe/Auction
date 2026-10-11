@@ -3,6 +3,8 @@
 import React, { useState } from "react";
 import { Loader2, LayoutGrid, ArrowRight, Hourglass, RotateCcw, Sparkles, Users, Power, Eye } from "lucide-react";
 import { getLiveKitToken, updateAuctionToLiveDirectly, closeLiveAuctionDirectly } from "@/app/actions/liveAuction";
+import { hasClearedAuctionGate } from "@/app/actions/auctionAccess";
+import AuctionAccessGate from "@/components/dashboard/AuctionAccessGate";
 import { useRouter } from "next/navigation";
 
 export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate }) {
@@ -13,6 +15,31 @@ export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate
   const [isReinitializing, setIsReinitializing] = useState(false);
   const [isInitializingId, setIsInitializingId] = useState(null); 
   const [isActionLoadingId, setIsActionLoadingId] = useState(null);
+  const [gateAuction, setGateAuction] = useState(null);
+
+  const enterLiveRoom = async (roomId, auctionItemId) => {
+    const access = await hasClearedAuctionGate(auctionItemId);
+    if (!access.success) throw new Error(access.error || "Could not verify auction access payments.");
+    if (!access.cleared) {
+      setGateAuction({ roomId, auctionItemId });
+      return;
+    }
+
+    const tokenPayload = await getLiveKitToken(roomId, auctionItemId);
+    if (!tokenPayload.success) throw new Error(tokenPayload.error || "Could not connect to the live auction.");
+    router.push(`/auctions/live/${roomId}?token=${tokenPayload.token}&id=${auctionItemId}`);
+  };
+
+  const handleAccessGranted = async () => {
+    if (!gateAuction) return;
+    try {
+      const tokenPayload = await getLiveKitToken(gateAuction.roomId, gateAuction.auctionItemId);
+      if (!tokenPayload.success) throw new Error(tokenPayload.error || "Could not connect to the live auction.");
+      router.push(`/auctions/live/${gateAuction.roomId}?token=${tokenPayload.token}&id=${gateAuction.auctionItemId}`);
+    } catch (error) {
+      alert(error.message || "Payments confirmed, but the room connection failed. Please try again.");
+    }
+  };
 
   const syncItemsList = (updatedList) => {
     setItemsList(updatedList);
@@ -30,22 +57,15 @@ export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate
       }
       
       const computedRoomId = `room-lot-${itemId}-${Date.now()}`;
-      await updateAuctionToLiveDirectly(itemId, computedRoomId);
-      
-      const tokenPromise = getLiveKitToken(computedRoomId, itemId);
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Signal timeout during WebRTC handshake")), 8000)
-      );
-
-      const tokenPayload = await Promise.race([tokenPromise, timeoutPromise]);
-      alert(`⚡ Database status successfully set to ACTIVE for Lot #${itemId}! Routing to room viewport...`);
+      const updateResult = await updateAuctionToLiveDirectly(itemId, computedRoomId);
+      if (updateResult?.success === false) throw new Error(updateResult.error);
       
       const updated = itemsList.map(item => 
         item.id === Number(itemId) ? { ...item, status: "ACTIVE", liveRoomId: computedRoomId } : item
       );
       syncItemsList(updated);
       setSelectedInventoryId("");
-      router.push(`/auctions/live/${computedRoomId}?token=${tokenPayload.token}&id=${itemId}`);
+      await enterLiveRoom(computedRoomId, Number(itemId));
     } catch (err) {
       if (err.message.includes("Failed to fetch") || err.message.includes("signal connection") || err.message.includes("timeout")) {
         alert("⚠️ Signaling connection lost or timed out. Refreshing workspace interface...");
@@ -63,11 +83,7 @@ export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate
     try {
       setIsActionLoadingId(item.id);
       const targetRoomId = item.liveRoomId || `room-lot-${item.id}-active`;
-      const tokenPromise = getLiveKitToken(targetRoomId, item.id);
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Signal timeout")), 8000));
-
-      const tokenPayload = await Promise.race([tokenPromise, timeoutPromise]);
-      router.push(`/auctions/live/${targetRoomId}?token=${tokenPayload.token}&id=${item.id}`);
+      await enterLiveRoom(targetRoomId, Number(item.id));
     } catch (err) {
       if (err.message.includes("Failed to fetch") || err.message.includes("timeout")) {
         alert("🔌 Network Link Timeout. Performing interface recovery...");
@@ -100,6 +116,15 @@ export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate
 
   return (
     <div className="space-y-6 md:space-y-8 pb-10">
+      {gateAuction && (
+        <AuctionAccessGate
+          open
+          onClose={() => setGateAuction(null)}
+          auctionItemId={gateAuction.auctionItemId}
+          roomId={gateAuction.roomId}
+          onAccessGranted={handleAccessGranted}
+        />
+      )}
       
       {/* 🔄 RELAUNCH ENGINE CONTAINER */}
       <div className="bg-[var(--color-card)] text-[var(--color-text)] rounded-2xl p-4 md:p-5 border border-[var(--color-border)] shadow-xl space-y-4">

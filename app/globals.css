@@ -1,12 +1,42 @@
 @import "tailwindcss";
+
 :root {
-  --color-primary: #5cbad1;    /* Bright Lime Green */
-  --color-secondary: #104d93;  /* Vibrant Green */
-  --color-accent: #aaccc6;     /* Deep Forest Green */
-  --color-muted: #487070;      /* Slate Teal */
-  --color-card: #18333D;       /* Dark Navy */
-  --color-bg: #ffffff;         /* Near Black */
-  --color-text: #ffffff;       /* White text */
-  --color-border: rgba(72, 112, 112, 0.2);
-  --color-input: rgba(24, 51, 61, 0.6);
+  color-scheme: dark;
+  --color-primary: #60a5fa;
+  --color-secondary: #1d4ed8;
+  --color-accent: #bfdbfe;
+  --color-muted: #9bb4d0;
+  --color-card: #10243a;
+  --color-bg: #081526;
+  --color-text: #f8fbff;
+  --color-border: rgba(147, 187, 229, 0.2);
+  --color-input: #142c46;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-primary: #1677d2;
+  --color-secondary: #1d5f9f;
+  --color-accent: #dbeafe;
+  --color-muted: #58718b;
+  --color-card: #ffffff;
+  --color-bg: #f3f8ff;
+  --color-text: #102b46;
+  --color-border: rgba(36, 91, 146, 0.2);
+  --color-input: #eaf3ff;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --color-primary: #1677d2;
+    --color-secondary: #1d5f9f;
+    --color-accent: #dbeafe;
+    --color-muted: #58718b;
+    --color-card: #ffffff;
+    --color-bg: #f3f8ff;
+    --color-text: #102b46;
+    --color-border: rgba(36, 91, 146, 0.2);
+    --color-input: #eaf3ff;
+  }
 }

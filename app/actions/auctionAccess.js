@@ -1,21 +1,31 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { auth } from "../../auth";
 import { db } from "@/lib/db";
 import { auctionAccessPayments, auctionItems, payments } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
+import { sendPaymentReceipt } from "@/lib/paymentReceipts";
+
+const DEFAULT_BIDDING_FEE = 5000;
+const DEFAULT_SECURITY_DEPOSIT = 50000;
+
+function getRequiredAmount(value, defaultAmount) {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount > 0 ? amount : defaultAmount;
+}
 
 /**
  * 🎟 LIVE AUCTION ACCESS GATE
  *
- * Document flow: a bidder who wants to join a live auction must:
+ * Document flow: a bidder or auctioneer who wants to join a live auction must:
  *   1. Pay the BIDDING FEE first.
  *   2. On confirmation, pay the SECURITY DEPOSIT (guarantee they honour their bid).
  *   3. Only after BOTH payments are confirmed does the system direct them to the auction room.
  */
 
 /**
- * Get the bidder's payment progress for a live auction lot.
+ * Get the user's payment progress for a live auction lot.
  * Returns which step of the fee sequence is next (or ACCESS_GRANTED when done).
  */
 export async function getAuctionAccessStatus(auctionItemId) {
@@ -76,8 +86,8 @@ export async function getAuctionAccessStatus(auctionItemId) {
         itemTitle: item.asset?.title || "Auction Lot",
         location: item.asset?.location || "",
         startingBid: Number(item.startingBid),
-        biddingFee: Number(item.biddingFee),
-        depositAmount: Number(item.depositAmount),
+        biddingFee: getRequiredAmount(item.biddingFee, DEFAULT_BIDDING_FEE),
+        depositAmount: getRequiredAmount(item.depositAmount, DEFAULT_SECURITY_DEPOSIT),
         biddingFeePaid,
         depositPaid,
         nextStep,
@@ -93,10 +103,9 @@ export async function getAuctionAccessStatus(auctionItemId) {
 
 /**
  * Step 1 — begin the BIDDING FEE payment for a live auction lot.
- * Creates (or reuses) a PENDING access record; the client completes the
- * PayChangu checkout against its tx_ref.
+ * Creates a PENDING access record with a server-generated payment reference.
  */
-export async function startBiddingFeePayment(auctionItemId) {
+async function startAccessFeePayment(auctionItemId, feeType) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
@@ -104,34 +113,68 @@ export async function startBiddingFeePayment(auctionItemId) {
     }
 
     const cleanId = Number(auctionItemId);
-    if (isNaN(cleanId)) {
-      return { success: false, error: "Invalid auction item ID." };
+    if (!Number.isInteger(cleanId) || cleanId <= 0) {
+      return { success: false, error: "Invalid auction access payment parameters." };
     }
 
     const item = await db.query.auctionItems.findFirst({
       where: eq(auctionItems.id, cleanId),
-      columns: { biddingFee: true },
+      columns: feeType === "BIDDING_FEE" ? { biddingFee: true } : { depositAmount: true },
     });
-    if (!item) {
-      return { success: false, error: "Auction item not found." };
+    if (!item) return { success: false, error: "Auction item not found." };
+
+    const amount = feeType === "BIDDING_FEE"
+      ? getRequiredAmount(item.biddingFee, DEFAULT_BIDDING_FEE)
+      : getRequiredAmount(item.depositAmount, DEFAULT_SECURITY_DEPOSIT);
+
+    const [existing] = await db.select().from(auctionAccessPayments).where(and(
+      eq(auctionAccessPayments.userId, Number(session.user.id)),
+      eq(auctionAccessPayments.auctionItemId, cleanId),
+      eq(auctionAccessPayments.feeType, feeType),
+    )).limit(1);
+    if (existing?.status === "PAID") {
+      return { success: true, data: { id: existing.id, amount: Number(existing.amount), alreadyPaid: true } };
+    }
+    if (existing?.status === "PENDING" && existing.paymentRef) {
+      const [pendingLedgerPayment] = await db.select({ gatewayStatus: payments.gatewayStatus })
+        .from(payments)
+        .where(eq(payments.reference, existing.paymentRef))
+        .limit(1);
+      if (pendingLedgerPayment?.gatewayStatus === "pending") {
+        return {
+          success: true,
+          data: {
+            id: existing.id,
+            amount: Number(existing.amount),
+            paymentRef: existing.paymentRef,
+            alreadyPending: true,
+          },
+        };
+      }
     }
 
+    const paymentRef = `BID265-${randomUUID()}`;
     const [record] = await db.insert(auctionAccessPayments).values({
-        userId: Number(session.user.id),
-        auctionItemId: cleanId,
-        feeType: "BIDDING_FEE",
-        amount: item.biddingFee,
-        status: "PENDING",
-      }).onConflictDoUpdate({
-        target: [auctionAccessPayments.userId, auctionAccessPayments.auctionItemId, auctionAccessPayments.feeType],
-        set: { status: "PENDING" },
-      }).returning();
+      userId: Number(session.user.id),
+      auctionItemId: cleanId,
+      feeType,
+      amount: String(amount),
+      paymentRef,
+      status: "PENDING",
+    }).onConflictDoUpdate({
+      target: [auctionAccessPayments.userId, auctionAccessPayments.auctionItemId, auctionAccessPayments.feeType],
+      set: { amount: String(amount), paymentRef, status: "PENDING", paidAt: null },
+    }).returning();
 
-    return { success: true, data: { id: record.id, amount: Number(record.amount) } };
+    return { success: true, data: { id: record.id, amount: Number(record.amount), paymentRef: record.paymentRef } };
   } catch (error) {
-    console.error("❌ Bidding fee start failure:", error);
-    return { success: false, error: error.message || "Could not start bidding fee payment." };
+    console.error(`[AccessPayment] ${feeType} start failure:`, error);
+    return { success: false, error: error.message || "Could not start auction access payment." };
   }
+}
+
+export async function startBiddingFeePayment(auctionItemId) {
+  return startAccessFeePayment(auctionItemId, "BIDDING_FEE");
 }
 
 /**
@@ -159,26 +202,7 @@ export async function startSecurityDepositPayment(auctionItemId) {
       return { success: false, error: "You must complete the bidding fee payment first." };
     }
 
-    const item = await db.query.auctionItems.findFirst({
-      where: eq(auctionItems.id, cleanId),
-      columns: { depositAmount: true },
-    });
-    if (!item) {
-      return { success: false, error: "Auction item not found." };
-    }
-
-    const [record] = await db.insert(auctionAccessPayments).values({
-        userId: Number(session.user.id),
-        auctionItemId: cleanId,
-        feeType: "SECURITY_DEPOSIT",
-        amount: item.depositAmount,
-        status: "PENDING",
-      }).onConflictDoUpdate({
-        target: [auctionAccessPayments.userId, auctionAccessPayments.auctionItemId, auctionAccessPayments.feeType],
-        set: { status: "PENDING" },
-      }).returning();
-
-    return { success: true, data: { id: record.id, amount: Number(record.amount) } };
+    return startAccessFeePayment(cleanId, "SECURITY_DEPOSIT");
   } catch (error) {
     console.error("❌ Security deposit start failure:", error);
     return { success: false, error: error.message || "Could not start security deposit payment." };
@@ -187,7 +211,7 @@ export async function startSecurityDepositPayment(auctionItemId) {
 
 /**
  * Confirm an access payment by its PayChangu tx_ref.
- * Called by the bidder's client after the gateway checkout returns/verifies.
+ * Called after the gateway checkout returns; access is granted only when PayChangu verifies success.
  */
 export async function confirmAuctionAccessPayment(auctionItemId, feeType, paymentRef) {
   try {
@@ -197,38 +221,75 @@ export async function confirmAuctionAccessPayment(auctionItemId, feeType, paymen
     }
 
     const cleanId = Number(auctionItemId);
-    const normalizedType = feeType === "SECURITY_DEPOSIT" ? "SECURITY_DEPOSIT" : "BIDDING_FEE";
+    const normalizedType = feeType === "SECURITY_DEPOSIT"
+      ? "SECURITY_DEPOSIT"
+      : feeType === "BIDDING_FEE"
+        ? "BIDDING_FEE"
+        : null;
 
-    if (isNaN(cleanId) || !paymentRef) {
+    if (!Number.isInteger(cleanId) || cleanId <= 0 || !normalizedType || typeof paymentRef !== "string" || !paymentRef.trim()) {
       return { success: false, error: "Invalid payment confirmation parameters." };
     }
 
-    // Trust but verify: ask the gateway for the real status when keys exist.
-    // Payments complete asynchronously on the PayChangu checkout page, so a PENDING
-    // result is normal — the client polls this action until the gateway reports success.
+    const userId = Number(session.user.id);
+    const [accessPayment] = await db.select().from(auctionAccessPayments).where(and(
+      eq(auctionAccessPayments.userId, userId),
+      eq(auctionAccessPayments.auctionItemId, cleanId),
+      eq(auctionAccessPayments.feeType, normalizedType),
+      eq(auctionAccessPayments.paymentRef, paymentRef),
+    )).limit(1);
+    const [payment] = await db.select().from(payments)
+      .where(eq(payments.reference, paymentRef))
+      .limit(1);
+
+    if (!accessPayment || !payment || payment.userId !== userId) {
+      return { success: false, error: "Payment does not match this auction access request." };
+    }
+    if (Number(accessPayment.amount) !== Number(payment.amount)) {
+      return { success: false, error: "Payment amount does not match the auction fee." };
+    }
+    if (payment.gatewayStatus.toLowerCase() === "completed" && accessPayment.status === "PAID") {
+      return { success: true, data: { status: "PAID", feeType: normalizedType } };
+    }
+
+    if (!process.env.PAYCHANGU_SECRET_KEY) {
+      return { success: false, error: "PayChangu verification is not configured. Auction access remains locked." };
+    }
+
+    // Payments complete asynchronously, so a PENDING gateway response is normal.
     let verified = null;
     let gatewayConfigured = Boolean(process.env.PAYCHANGU_SECRET_KEY);
     if (gatewayConfigured) {
       try {
-        const verifyRes = await fetch(`https://api.paychangu.com/verify-payment/${paymentRef}`, {
+        const verifyRes = await fetch(`https://api.paychangu.com/verify-payment/${encodeURIComponent(paymentRef)}`, {
           headers: {
             Authorization: `Bearer ${process.env.PAYCHANGU_SECRET_KEY}`,
             Accept: "application/json",
           },
+          cache: "no-store",
         });
+        if (!verifyRes.ok) {
+          console.error("[AccessPayment] PayChangu verification failed with status:", verifyRes.status);
+          throw new Error("PayChangu verification request failed.");
+        }
         const verifyData = await verifyRes.json();
-        verified = verifyData?.data?.status || null;
+        const gatewayPayment = verifyData?.data;
+        const gatewayReference = gatewayPayment?.tx_ref || gatewayPayment?.reference;
+        if (
+          (gatewayReference && gatewayReference !== paymentRef) ||
+          (gatewayPayment?.amount != null && Number(gatewayPayment.amount) !== Number(accessPayment.amount))
+        ) {
+          verified = "invalid";
+        } else {
+          verified = String(gatewayPayment?.status || "").toLowerCase();
+        }
       } catch (verifyErr) {
         console.error("[AccessPayment] verify error:", verifyErr);
       }
     }
 
-    // Without gateway credentials (local dev/sandbox) we auto-confirm so the
-    // access flow remains testable; in production the gateway decides.
     let effectiveStatus;
-    if (!gatewayConfigured) {
-      effectiveStatus = "PAID";
-    } else if (verified === "success") {
+    if (verified === "success") {
       effectiveStatus = "PAID";
     } else if (verified === "failed") {
       effectiveStatus = "FAILED";
@@ -244,6 +305,7 @@ export async function confirmAuctionAccessPayment(auctionItemId, feeType, paymen
         eq(auctionAccessPayments.userId, Number(session.user.id)),
         eq(auctionAccessPayments.auctionItemId, cleanId),
         eq(auctionAccessPayments.feeType, normalizedType),
+        eq(auctionAccessPayments.paymentRef, paymentRef),
       )).returning();
 
     if (!record) {
@@ -254,21 +316,26 @@ export async function confirmAuctionAccessPayment(auctionItemId, feeType, paymen
       return { success: true, data: { status: record.status, feeType: record.feeType, needsVerification: true } };
     }
 
+    await db.update(payments).set({
+      gatewayStatus: effectiveStatus === "PAID" ? "completed" : effectiveStatus === "FAILED" ? "failed" : "pending",
+    }).where(eq(payments.reference, paymentRef));
+
     if (effectiveStatus === "PAID") {
-      // Keep the general payment ledger in sync for the payments dashboard.
-      await db.insert(payments).values({
-          userId: Number(session.user.id),
-          amount: record.amount,
-          reference: paymentRef,
-          gatewayStatus: "completed",
-          purpose: normalizedType,
-        }).onConflictDoUpdate({
-          target: payments.reference,
-          set: { gatewayStatus: "completed", purpose: normalizedType },
-        });
+      try {
+        await sendPaymentReceipt(paymentRef);
+      } catch (receiptError) {
+        console.error("[AccessPayment] Payment verified, but receipt email failed:", receiptError);
+      }
     }
 
-    return { success: true, data: { status: record.status, feeType: record.feeType } };
+    return {
+      success: true,
+      data: {
+        status: record.status,
+        feeType: record.feeType,
+        needsVerification: effectiveStatus === "PENDING",
+      },
+    };
   } catch (error) {
     console.error("❌ Access payment confirmation failure:", error);
     return { success: false, error: error.message || "Could not confirm the access payment." };

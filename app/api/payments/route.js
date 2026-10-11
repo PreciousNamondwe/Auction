@@ -11,10 +11,12 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const userPayments = await db.select().from(payments)
-      .where(eq(payments.userId, parseInt(session.user.id)))
-      .orderBy(desc(payments.createdAt))
-      .limit(50);
+    const userPayments = session.user.role === "ADMIN"
+      ? await db.select().from(payments).orderBy(desc(payments.createdAt)).limit(50)
+      : await db.select().from(payments)
+        .where(eq(payments.userId, Number(session.user.id)))
+        .orderBy(desc(payments.createdAt))
+        .limit(50);
 
     return NextResponse.json({ payments: userPayments });
   } catch (error) {

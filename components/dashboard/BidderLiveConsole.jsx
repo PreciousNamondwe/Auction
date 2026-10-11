@@ -168,6 +168,7 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
           open={Boolean(gateAuction)}
           onClose={() => setGateAuction(null)}
           auctionItemId={gateAuction.auctionItemId}
+          roomId={gateAuction.roomId}
           onAccessGranted={handleAccessGranted}
         />
       )}

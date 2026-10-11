@@ -190,6 +190,21 @@ export default function LiveRoomPage({ params }) {
 
   const handleLeaveRoom = () => router.push("/dashboard");
 
+  if (!isLoading && bidError && (!token || !auctionItem)) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-center" style={{ backgroundColor: "var(--color-bg)", color: "var(--color-text)" }}>
+        <p className="text-sm text-red-400">{bidError}</p>
+        <button
+          type="button"
+          onClick={() => router.push("/dashboard?tab=live-auctions")}
+          className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-bold text-white"
+        >
+          Return to live auctions
+        </button>
+      </div>
+    );
+  }
+
   if (isLoading || !token || !auctionItem) {
     return (
       <div className="h-screen w-screen flex flex-col items-center justify-center gap-4"

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { payments } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { auctionAccessPayments, payments } from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 
 const PAYCHANGU_BASE = "https://api.paychangu.com";
 
@@ -20,11 +20,29 @@ export async function POST(request) {
       callback_url, return_url,
     } = body;
 
-    if (!amount || !tx_ref || !email || !purpose) {
+    const requestedAmount = Number(amount);
+    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0 || !tx_ref || !email || !purpose) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 }
       );
+    }
+
+    const accessFeeType = ["BIDDING_FEE", "SECURITY_DEPOSIT"].includes(purpose) ? purpose : null;
+    if (accessFeeType) {
+      const [accessPayment] = await db.select().from(auctionAccessPayments).where(and(
+        eq(auctionAccessPayments.userId, Number(session.user.id)),
+        eq(auctionAccessPayments.feeType, accessFeeType),
+        eq(auctionAccessPayments.paymentRef, tx_ref),
+      )).limit(1);
+
+      if (
+        !accessPayment ||
+        accessPayment.status !== "PENDING" ||
+        Number(accessPayment.amount) !== requestedAmount
+      ) {
+        return NextResponse.json({ error: "Auction fee does not match a pending access payment" }, { status: 400 });
+      }
     }
 
     // Idempotency check
@@ -37,13 +55,13 @@ export async function POST(request) {
     await db.insert(payments).values({
         reference: tx_ref,
         userId: parseInt(session.user.id),
-        amount: parseFloat(amount),
+        amount: requestedAmount,
         gatewayStatus: "pending",
         purpose,
       });
 
     const payload = {
-      amount,
+      amount: requestedAmount,
       currency,
       tx_ref,
       callback_url,
@@ -80,6 +98,10 @@ export async function POST(request) {
 
     if (!payRes.ok) {
       await db.update(payments).set({ gatewayStatus: "failed" }).where(eq(payments.reference, tx_ref));
+      if (accessFeeType) {
+        await db.update(auctionAccessPayments).set({ status: "FAILED" })
+          .where(eq(auctionAccessPayments.paymentRef, tx_ref));
+      }
       return NextResponse.json(
         { error: payData.message || "PayChangu error", details: payData },
         { status: 502 }
@@ -87,7 +109,7 @@ export async function POST(request) {
     }
 
     // Update DB
-    await db.update(payments).set({ gatewayStatus: payData.data?.status || "pending" }).where(eq(payments.reference, tx_ref));
+    await db.update(payments).set({ gatewayStatus: "pending" }).where(eq(payments.reference, tx_ref));
 
     // Extract checkout link — PayChangu may return it under different keys
     const checkoutUrl =

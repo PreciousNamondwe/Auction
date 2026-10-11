@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { auctionItems, bids } from "@/lib/db/schema";
 import { desc, eq } from "drizzle-orm";
 import Pusher from "pusher";
+import { hasClearedAuctionGate } from "@/app/actions/auctionAccess";
 
 const pusher = new Pusher({
   appId: process.env.PUSHER_APP_ID || "",
@@ -87,13 +88,40 @@ export async function getLiveKitToken(roomId, auctionItemId) {
       return { success: false, error: "Authentication rejected." };
     }
 
+    const cleanId = Number(auctionItemId);
+    if (!Number.isInteger(cleanId) || cleanId <= 0 || typeof roomId !== "string" || !roomId.trim()) {
+      return { success: false, error: "Invalid live auction room." };
+    }
+
+    const item = await db.query.auctionItems.findFirst({
+      where: eq(auctionItems.id, cleanId),
+      columns: { status: true, liveRoomId: true },
+    });
+    if (!item || (item.status !== "ACTIVE" && item.status !== "LIVE")) {
+      return { success: false, error: "This auction is not live." };
+    }
+    if (
+      (item.liveRoomId && item.liveRoomId !== roomId) ||
+      (!item.liveRoomId && ![String(cleanId), `room-lot-${cleanId}-active`].includes(roomId))
+    ) {
+      return { success: false, error: "This room does not belong to the selected auction." };
+    }
+
+    const role = session.user.role || "BIDDER";
+    if (role !== "ADMIN") {
+      const access = await hasClearedAuctionGate(cleanId);
+      if (!access.success) return { success: false, error: access.error };
+      if (!access.cleared) {
+        return { success: false, error: "Pay the bidding fee and security deposit before entering this auction." };
+      }
+    }
+
     const apiKey = process.env.LIVEKIT_API_KEY;
     const apiSecret = process.env.LIVEKIT_API_SECRET;
     if (!apiKey || !apiSecret) {
       return { success: false, error: "Missing WebRTC infrastructure credentials." };
     }
 
-    const role = session.user.role || "BIDDER"; 
     const participantIdentity = `${role.toLowerCase()}-${session.user.id}`;
 
     const at = new AccessToken(apiKey, apiSecret, {
@@ -163,6 +191,12 @@ export async function submitLiveBid(auctionItemId, amount) {
       return { success: false, error: `Bidding session is currently not accepting active offers. (Current Status: ${targetItem.status})` };
     }
 
+    const access = await hasClearedAuctionGate(targetLotId);
+    if (!access.success) return { success: false, error: access.error };
+    if (!access.cleared) {
+      return { success: false, error: "Pay the bidding fee and security deposit before placing a bid." };
+    }
+
     const highestBidValue = targetItem.bids[0]?.amount ? Number(targetItem.bids[0].amount) : Number(targetItem.startingBid);
     if (incomingAmount <= highestBidValue) {
       return { success: false, error: `Bid must exceed current high mark of MWK ${highestBidValue.toLocaleString()}.` };
@@ -204,6 +238,14 @@ export async function getAuctionItemDetails(auctionItemId) {
     const cleanId = Number(auctionItemId);
     if (isNaN(cleanId)) {
       return { success: false, error: "Invalid auction item ID." };
+    }
+
+    if (session.user.role !== "ADMIN") {
+      const access = await hasClearedAuctionGate(cleanId);
+      if (!access.success) return { success: false, error: access.error };
+      if (!access.cleared) {
+        return { success: false, error: "Pay the bidding fee and security deposit before entering this auction." };
+      }
     }
 
     const item = await db.query.auctionItems.findFirst({

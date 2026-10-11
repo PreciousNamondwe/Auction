@@ -17,7 +17,6 @@ import {
 import {
   initiatePayment,
   fetchUserProfile,
-  generateTxRef,
   formatAmount,
   parseName,
 } from "@/lib/payments";
@@ -29,13 +28,12 @@ import {
 } from "@/app/actions/auctionAccess";
 
 const CALLBACK_URL = process.env.NEXT_PUBLIC_PAYCHANGU_CALLBACK_URL;
-const RETURN_URL = process.env.NEXT_PUBLIC_PAYCHANGU_RETURN_URL;
 
 /**
  * One row of the two-step fee sequence (bidding fee / security deposit).
  * Declared outside the gate component so it is not re-created on every render.
  */
-const FeeStepRow = ({ label, amount, done, active, busy, onPay }) => (
+const FeeStepRow = ({ label, amount, done, active, busy, pending, onPay }) => (
   <div
     className={`flex items-center justify-between p-4 rounded-xl border transition-all ${
       done
@@ -77,7 +75,7 @@ const FeeStepRow = ({ label, amount, done, active, busy, onPay }) => (
           className="mt-1 flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white rounded-lg text-[10px] font-bold transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CreditCard className="w-3 h-3" />}
-          {busy ? "Confirming…" : "Pay Now"}
+          {busy ? "Confirming…" : pending ? "Check Payment" : "Pay Now"}
         </button>
       )}
     </div>
@@ -91,9 +89,9 @@ const FeeStepRow = ({ label, amount, done, active, busy, onPay }) => (
  *   Step 1 — pay the BIDDING FEE.
  *   Step 2 — on confirmation, pay the SECURITY DEPOSIT (guarantee the bid is honoured).
  *   Step 3 — only after BOTH payments are confirmed does the system direct the
- *            bidder to the auction room.
+ *            user to the auction room.
  */
-export default function AuctionAccessGate({ open, onClose, auctionItemId, onAccessGranted }) {
+export default function AuctionAccessGate({ open, onClose, auctionItemId, roomId, onAccessGranted }) {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [stepState, setStepState] = useState("idle"); // idle | paying | confirming | error
@@ -106,7 +104,27 @@ export default function AuctionAccessGate({ open, onClose, auctionItemId, onAcce
       setLoading(true);
       const res = await getAuctionAccessStatus(auctionItemId);
       if (res.success) {
-        setStatus(res.data);
+        let status = res.data;
+        let confirmationError = null;
+        const pendingPayments = [
+          ["BIDDING_FEE", status.pendingBiddingFeeRef],
+          ["SECURITY_DEPOSIT", status.pendingDepositRef],
+        ].filter(([, reference]) => reference);
+
+        for (const [feeType, reference] of pendingPayments) {
+          const confirmation = await confirmAuctionAccessPayment(auctionItemId, feeType, reference);
+          if (!confirmation.success) {
+            confirmationError = confirmation.error;
+            break;
+          }
+        }
+
+        if (pendingPayments.length > 0) {
+          const refreshed = await getAuctionAccessStatus(auctionItemId);
+          if (refreshed.success) status = refreshed.data;
+        }
+        setStatus(status);
+        setError(confirmationError);
       } else {
         setError(res.error);
       }
@@ -143,10 +161,32 @@ export default function AuctionAccessGate({ open, onClose, auctionItemId, onAcce
           : await startSecurityDepositPayment(auctionItemId);
 
       if (!startRes.success) throw new Error(startRes.error);
+      if (startRes.data?.alreadyPaid) {
+        const refreshed = await getAuctionAccessStatus(auctionItemId);
+        if (refreshed.success && refreshed.data.nextStep === "ACCESS_GRANTED") {
+          onAccessGranted?.(refreshed.data);
+          onClose?.();
+        } else {
+          await loadStatus();
+        }
+        return;
+      }
+      if (startRes.data?.alreadyPending) {
+        await loadStatus();
+        return;
+      }
+
+      const ref = startRes.data.paymentRef;
+      if (!ref) throw new Error("Could not create a secure payment reference.");
 
       // 2. Initiate the PayChangu checkout
-      const ref = generateTxRef();
       const { firstName, lastName } = parseName(user?.name || "");
+      const returnUrl = new URL("/dashboard", window.location.origin);
+      returnUrl.searchParams.set("tab", "live-auctions");
+      returnUrl.searchParams.set("access_payment_ref", ref);
+      returnUrl.searchParams.set("access_auction_id", String(auctionItemId));
+      returnUrl.searchParams.set("access_fee_type", feeType);
+      returnUrl.searchParams.set("access_room_id", roomId);
 
       const initRes = await initiatePayment({
         amount: startRes.data.amount,
@@ -159,48 +199,15 @@ export default function AuctionAccessGate({ open, onClose, auctionItemId, onAcce
         method: "card",
         purpose: feeType,
         callback_url: CALLBACK_URL,
-        return_url: RETURN_URL,
+        return_url: returnUrl.toString(),
       });
 
       if (!initRes.checkoutUrl) {
         throw new Error("Gateway did not return a checkout link. Try again.");
       }
 
-      // 3. Confirm with the gateway — may stay PENDING until the user finishes checkout
       setStepState("confirming");
-      let confirmRes = await confirmAuctionAccessPayment(auctionItemId, feeType, ref);
-      if (!confirmRes.success) throw new Error(confirmRes.error);
-
-      // Poll while the gateway still reports the payment as pending checkout.
-      let attempts = 0;
-      while (
-        confirmRes.data?.needsVerification &&
-        attempts < 30
-      ) {
-        await new Promise((r) => setTimeout(r, 2000));
-        confirmRes = await confirmAuctionAccessPayment(auctionItemId, feeType, ref);
-        if (!confirmRes.success) throw new Error(confirmRes.error);
-        attempts += 1;
-      }
-
-      if (confirmRes.data?.needsVerification) {
-        throw new Error(
-          "Payment is still processing. Complete the PayChangu checkout, then reopen this gate to continue."
-        );
-      }
-
-      // 4. Reload status; if both fees are now cleared, hand over to the room
-      await loadStatus();
-
-      const refreshed = await getAuctionAccessStatus(auctionItemId);
-      if (refreshed.success && refreshed.data.nextStep === "ACCESS_GRANTED") {
-        setTimeout(() => {
-          onAccessGranted?.(refreshed.data);
-          onClose?.();
-        }, 900);
-      } else {
-        setStepState("idle");
-      }
+      window.location.assign(initRes.checkoutUrl);
     } catch (err) {
       console.error("[AccessGate]", err);
       setError(err.message);
@@ -289,7 +296,8 @@ export default function AuctionAccessGate({ open, onClose, auctionItemId, onAcce
                 done={biddingFeeDone}
                 active={nextStep === "BIDDING_FEE"}
                 busy={isFeeBusy("BIDDING_FEE")}
-                onPay={() => payFee("BIDDING_FEE")}
+                pending={Boolean(status?.pendingBiddingFeeRef)}
+                onPay={() => status?.pendingBiddingFeeRef ? loadStatus() : payFee("BIDDING_FEE")}
               />
 
               <FeeStepRow
@@ -298,7 +306,8 @@ export default function AuctionAccessGate({ open, onClose, auctionItemId, onAcce
                 done={depositDone}
                 active={nextStep === "SECURITY_DEPOSIT"}
                 busy={isFeeBusy("SECURITY_DEPOSIT")}
-                onPay={() => payFee("SECURITY_DEPOSIT")}
+                pending={Boolean(status?.pendingDepositRef)}
+                onPay={() => status?.pendingDepositRef ? loadStatus() : payFee("SECURITY_DEPOSIT")}
               />
 
               {error && stepState === "error" && (

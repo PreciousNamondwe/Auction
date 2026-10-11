@@ -37,7 +37,7 @@ export default function AuctioneerAddListing({ initialMode = "property" }) {
   const [form, setForm] = useState({
     title: "", description: "", location: "", documentUrl: "",
     startingBid: "", reservePrice: "", depositAmount: "",
-    biddingFee: "", price: "", stockCount: "1",
+    biddingFee: "5000", price: "", stockCount: "1",
   });
 
   const addSpecificationRow = () => setDynamicAttributes([...dynamicAttributes, { key: "", value: "" }]);
@@ -84,7 +84,7 @@ export default function AuctioneerAddListing({ initialMode = "property" }) {
         formData.append("startingBid", form.startingBid);
         formData.append("reservePrice", form.reservePrice);
         formData.append("depositAmount", form.depositAmount);
-        formData.append("biddingFee", form.biddingFee || "0");
+        formData.append("biddingFee", form.biddingFee || "5000");
         const res = await createAssetAndAuction(formData);
         if (!res.success) throw new Error(res.error || "Failed to publish auction listing.");
         alert("🎉 Property auction listing registered!");
@@ -263,7 +263,7 @@ export default function AuctioneerAddListing({ initialMode = "property" }) {
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Bidding Fee (MWK)</label>
-                <input type="number" required placeholder="10000" value={form.biddingFee} onChange={(e) => setForm({...form, biddingFee: e.target.value})} className={inputClass} />
+                <input type="number" min="1" required placeholder="5000" value={form.biddingFee} onChange={(e) => setForm({...form, biddingFee: e.target.value})} className={inputClass} />
               </div>
             </div>
           </div>
