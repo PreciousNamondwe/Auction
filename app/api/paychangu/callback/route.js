@@ -8,6 +8,26 @@ import { syncListingSalePayment } from "@/lib/paymentSales";
 
 const WEBHOOK_SECRET = process.env.PAYCHANGU_SECRET_KEY; // Same as API key
 
+export async function GET() {
+  return NextResponse.json(
+    {
+      error: "This is a PayChangu webhook endpoint, not a web page.",
+      message: "PayChangu must send a signed POST request to this URL.",
+      method: "POST",
+    },
+    { status: 405, headers: { Allow: "POST" } },
+  );
+}
+
+async function attemptReceiptEmail(reference) {
+  try {
+    return { sent: await sendPaymentReceipt(reference), error: null };
+  } catch (error) {
+    console.error("[PayChangu Webhook] Payment was recorded, but receipt email failed:", error);
+    return { sent: false, error: "Payment recorded, but receipt email could not be sent." };
+  }
+}
+
 export async function POST(request) {
   try {
     // ── 1. Verify webhook signature ──
@@ -31,8 +51,15 @@ export async function POST(request) {
     }
 
     // ── 2. Parse payload ──
-    const data = JSON.parse(payload);
-    console.log("[PayChangu Webhook]", data);
+    let data;
+    try {
+      data = JSON.parse(payload);
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      return NextResponse.json({ error: "Invalid webhook payload" }, { status: 400 });
+    }
 
     // PayChangu uses "reference" in webhooks, not "tx_ref"
     const tx_ref = data.reference || data.tx_ref;
@@ -44,6 +71,9 @@ export async function POST(request) {
     }
 
     // ── 3. Idempotency ──
+    if (typeof tx_ref !== "string" || !tx_ref.trim()) {
+      return NextResponse.json({ error: "Invalid reference" }, { status: 400 });
+    }
     const [existing] = await db.select().from(payments).where(eq(payments.reference, tx_ref)).limit(1);
 
     if (!existing) {
@@ -51,8 +81,13 @@ export async function POST(request) {
     }
     if (existing.gatewayStatus === "completed") {
       await syncListingSalePayment(tx_ref, "completed");
-      await sendPaymentReceipt(tx_ref);
-      return NextResponse.json({ received: true, alreadyProcessed: true });
+      const receipt = await attemptReceiptEmail(tx_ref);
+      return NextResponse.json({
+        received: true,
+        alreadyProcessed: true,
+        receiptEmailSent: receipt.sent,
+        ...(receipt.error ? { receiptEmailError: receipt.error } : {}),
+      });
     }
 
     if (amount != null && Number(amount) !== Number(existing.amount)) {
@@ -85,7 +120,13 @@ export async function POST(request) {
 
     if (mappedStatus === "completed") {
       console.log("[PayChangu] Payment completed:", tx_ref);
-      await sendPaymentReceipt(tx_ref);
+      const receipt = await attemptReceiptEmail(tx_ref);
+      return NextResponse.json({
+        received: true,
+        status: mappedStatus,
+        receiptEmailSent: receipt.sent,
+        ...(receipt.error ? { receiptEmailError: receipt.error } : {}),
+      });
     }
 
     return NextResponse.json({ received: true, status: mappedStatus });
