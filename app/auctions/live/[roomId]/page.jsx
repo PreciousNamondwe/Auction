@@ -297,7 +297,7 @@ export default function LiveRoomPage({ params }) {
               <div className="absolute bottom-0 left-0 right-0 p-5">
                 <h1 className="text-2xl font-black mb-1">{auctionItem.asset?.title}</h1>
                 <p className="text-xs flex items-center gap-1" style={{ color: "var(--color-muted)" }}>
-                  <MapPin size={11} /> {auctionItem.asset?.location}
+                  <MapPin size={11} /> Client: {auctionItem.asset?.location || "N/A"}
                 </p>
               </div>
             </div>

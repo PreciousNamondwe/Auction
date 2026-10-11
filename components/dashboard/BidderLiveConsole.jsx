@@ -285,7 +285,7 @@ export default function BidderLiveConsole({ auctionItems = [] }) {
                     </h3>
                     <div className="flex items-center gap-1 mt-1.5 text-[10px] text-[var(--color-muted)]">
                       <MapPin className="w-3 h-3 shrink-0" />
-                      <span className="truncate">{auction.location || auction.asset?.location || "Malawi"}</span>
+                      <span className="truncate">Client: {auction.location || auction.asset?.location || "N/A"}</span>
                     </div>
                   </div>
 

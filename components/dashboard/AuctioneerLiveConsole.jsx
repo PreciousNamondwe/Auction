@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Loader2, LayoutGrid, ArrowRight, Hourglass, RotateCcw, Sparkles, Users, Power, Eye } from "lucide-react";
+import { Loader2, LayoutGrid, ArrowRight, Hourglass, RotateCcw, Sparkles, Users, Power, Eye, CalendarPlus } from "lucide-react";
 import { getLiveKitToken, updateAuctionToLiveDirectly, closeLiveAuctionDirectly } from "@/app/actions/liveAuction";
 import { hasClearedAuctionGate } from "@/app/actions/auctionAccess";
 import AuctionAccessGate from "@/components/dashboard/AuctionAccessGate";
@@ -121,6 +121,20 @@ export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate
 
   return (
     <div className="space-y-6 md:space-y-8 pb-10">
+      <div className="flex flex-col gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-sm font-bold text-[var(--color-text)]">Auctions</h2>
+          <p className="mt-1 text-[11px] text-[var(--color-muted)]">Schedule an auction or manage your scheduled and live auctions.</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => router.push("/dashboard/add-listing?mode=auction")}
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-bold text-white transition hover:opacity-90"
+        >
+          <CalendarPlus className="h-4 w-4" /> Schedule Auction
+        </button>
+      </div>
+
       {gateAuction && (
         <AuctionAccessGate
           open

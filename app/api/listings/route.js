@@ -25,7 +25,6 @@ export async function GET() {
     const userId = Number(session.user.id);
 
     const dailySaleRows = await db.query.dailySales.findMany({
-      where: (dailySale, { eq }) => eq(dailySale.isAvailable, true),
       with: {
         asset: {
           with: {

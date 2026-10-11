@@ -128,7 +128,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
   const getTabLabel = (tab) => {
     const labels = {
       "dashboard": "Dashboard",
-      "live-auctions": isAuctioneer ? "Manage Auctions" : "Live Auction Floor",
+      "live-auctions": isAuctioneer ? "Auctions" : "Live Auction Floor",
       "daily-sales": "Daily Sales",
       "properties": "Properties",
       "my-bids": "My Bids",
@@ -143,7 +143,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
 
   const navItems = [
     { id: "dashboard", icon: LayoutDashboard, label: "Dashboard", show: true },
-    { id: "live-auctions", icon: Tv, label: isAuctioneer ? "Manage Auctions" : "Live Auction Floor", show: true, badge: liveCount },
+    { id: "live-auctions", icon: Tv, label: isAuctioneer ? "Auctions" : "Live Auction Floor", show: true, badge: liveCount },
     { id: "daily-sales", icon: ShoppingBag, label: "Daily Sales", show: !isAuctioneer },
     { id: "properties", icon: Home, label: "Properties", show: !isAuctioneer },
     { id: "my-bids", icon: Gavel, label: "My Bids", show: !isAuctioneer },

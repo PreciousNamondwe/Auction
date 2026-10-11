@@ -9,9 +9,6 @@ import {
   DollarSign,
   UploadCloud,
   ArrowLeft,
-  ShoppingBag,
-  Home,
-  Gavel,
 } from "lucide-react";
 import { createAssetAndAuction } from "@/app/actions/createAssetAndAuction";
 import { createDailySaleListing } from "@/app/actions/createDailySale";
@@ -26,10 +23,10 @@ import { createDailySaleListing } from "@/app/actions/createDailySale";
  */
 export default function AuctioneerAddListing({ initialMode = "property" }) {
   const router = useRouter();
-  const [mode, setMode] = useState(initialMode === "daily-sale" ? "daily-sale" : "property");
+  const mode = ["daily-sale", "auction"].includes(initialMode) ? initialMode : "property";
   const [listingType, setListingType] = useState("SALE");
   const [isPublishing, setIsPublishing] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState("REAL_ESTATE");
+  const [selectedCategory, setSelectedCategory] = useState(initialMode === "daily-sale" ? "OTHER" : "REAL_ESTATE");
   const [customCategory, setCustomCategory] = useState("");
   const [uploadedFile, setUploadedFile] = useState(null);
 
@@ -105,7 +102,7 @@ export default function AuctioneerAddListing({ initialMode = "property" }) {
         alert(`🎉 ${propertyType === "AUCTION" ? "Auction" : `Property ${propertyType.toLowerCase()}`} listing registered!`);
       }
 
-      router.push("/dashboard");
+      router.push(mode === "auction" ? "/dashboard?tab=live-auctions" : "/dashboard?tab=manage-listings");
       router.refresh();
     } catch (err) {
       alert(err.message || "Publishing failed.");
@@ -129,39 +126,10 @@ export default function AuctioneerAddListing({ initialMode = "property" }) {
           </Link>
           <div className="flex items-center gap-2">
             <LayoutGrid className="w-4 h-4 text-[var(--color-primary)]" />
-            <h3 className="text-xs font-bold text-[var(--color-text)] uppercase tracking-wider">Add New Listing</h3>
+            <h3 className="text-xs font-bold text-[var(--color-text)] uppercase tracking-wider">
+              {mode === "daily-sale" ? "New Daily Sale" : mode === "auction" ? "Schedule Auction" : "New Property Listing"}
+            </h3>
           </div>
-        </div>
-
-        {/* Listing type switch */}
-        <div className="flex items-center gap-2 bg-[var(--color-input)] border border-[var(--color-border)] rounded-xl p-1 w-fit">
-          <button
-            type="button"
-            onClick={() => { setMode("daily-sale"); setSelectedCategory("OTHER"); }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
-              mode === "daily-sale" ? "bg-[var(--color-secondary)] text-white" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"
-            }`}
-          >
-            <ShoppingBag className="w-3.5 h-3.5" /> Daily Sale
-          </button>
-          <button
-            type="button"
-            onClick={() => { setMode("property"); setListingType("SALE"); setSelectedCategory("REAL_ESTATE"); }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
-              mode === "property" ? "bg-[var(--color-secondary)] text-white" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"
-            }`}
-          >
-            <Home className="w-3.5 h-3.5" /> Sale / Lease
-          </button>
-          <button
-            type="button"
-            onClick={() => { setMode("auction"); setSelectedCategory("REAL_ESTATE"); }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
-              mode === "auction" ? "bg-[var(--color-secondary)] text-white" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"
-            }`}
-          >
-            <Gavel className="w-3.5 h-3.5" /> Auction
-          </button>
         </div>
       </div>
 
@@ -257,7 +225,7 @@ export default function AuctioneerAddListing({ initialMode = "property" }) {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Buy Now Price (MWK)</label>
+                <label className="block text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1">Sale Price (MWK)</label>
                 <input type="number" required placeholder="15000000" value={form.price} onChange={(e) => setForm({...form, price: e.target.value})} className={inputClass} />
               </div>
               <div>

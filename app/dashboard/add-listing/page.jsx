@@ -21,7 +21,7 @@ export default async function AddListingPage({ searchParams }) {
   }
 
   const params = await searchParams;
-  const initialMode = params?.mode === "daily-sale" ? "daily-sale" : "property";
+  const initialMode = ["daily-sale", "auction"].includes(params?.mode) ? params.mode : "property";
 
   return (
     <DashboardLayoutFrame

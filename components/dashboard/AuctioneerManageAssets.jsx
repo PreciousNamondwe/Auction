@@ -80,20 +80,14 @@ export default function AuctioneerManageAssets() {
 
   return (
     <div className="space-y-6 pb-10">
-      {/* Header row with global Add Listing */}
+      {/* Header row */}
       <div className="bg-[var(--color-card)] rounded-2xl p-5 border border-[var(--color-border)] shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-sm font-bold text-[var(--color-text)]">Manage Listings</h2>
           <p className="text-[11px] text-[var(--color-muted)] mt-0.5">
-            Every daily sale and property listing you publish is managed under its column below.
+            Add and manage daily sales and property listings in their respective sections.
           </p>
         </div>
-        <Link
-          href="/dashboard/add-listing"
-          className="flex items-center justify-center gap-2 px-5 py-2.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white text-xs font-bold rounded-xl transition-all active:scale-95 shadow-md shadow-[var(--color-primary)]/20 shrink-0"
-        >
-          <Plus className="w-4 h-4" /> Add Listing
-        </Link>
       </div>
 
       {loading ? (
@@ -139,9 +133,6 @@ export default function AuctioneerManageAssets() {
               <div className="bg-[var(--color-card)] border border-dashed border-[var(--color-border)] rounded-2xl p-8 text-center">
                 <ShoppingBag className="w-10 h-10 text-[var(--color-muted)] mx-auto mb-3 opacity-40" />
                 <p className="text-xs text-[var(--color-muted)] font-medium">No daily sale listings yet.</p>
-                <Link href="/dashboard/add-listing?mode=daily-sale" className="inline-block mt-3 text-[11px] font-bold text-[var(--color-primary)] hover:underline">
-                  Publish your first commodity →
-                </Link>
               </div>
             ) : (
               <div className="space-y-3">
@@ -209,9 +200,6 @@ export default function AuctioneerManageAssets() {
               <div className="bg-[var(--color-card)] border border-dashed border-[var(--color-border)] rounded-2xl p-8 text-center">
                 <Home className="w-10 h-10 text-[var(--color-muted)] mx-auto mb-3 opacity-40" />
                 <p className="text-xs text-[var(--color-muted)] font-medium">No property listings yet.</p>
-                <Link href="/dashboard/add-listing?mode=property" className="inline-block mt-3 text-[11px] font-bold text-[var(--color-primary)] hover:underline">
-                  Register your first property →
-                </Link>
               </div>
             ) : (
               <div className="space-y-3">

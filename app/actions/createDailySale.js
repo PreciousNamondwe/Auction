@@ -131,11 +131,30 @@ export async function toggleDailySaleAvailability(dailySaleId, isAvailable) {
       return { success: false, error: "Unauthorized." };
     }
 
+    const id = Number(dailySaleId);
+    if (!Number.isInteger(id) || id <= 0) {
+      return { success: false, error: "Invalid daily sale listing." };
+    }
+
+    const listing = await db.query.dailySales.findFirst({
+      where: eq(dailySales.id, id),
+      with: { asset: { columns: { createdById: true, salesType: true } } },
+    });
+    if (!listing || listing.asset?.salesType !== "DAILY_SALE") {
+      return { success: false, error: "Daily sale listing not found." };
+    }
+    if (session.user.role !== "ADMIN" && listing.asset.createdById !== Number(session.user.id)) {
+      return { success: false, error: "You can only manage your own daily sale listings." };
+    }
+
     const [updated] = await db.update(dailySales)
       .set({ isAvailable: Boolean(isAvailable) })
-      .where(eq(dailySales.id, Number(dailySaleId)))
+      .where(eq(dailySales.id, id))
       .returning({ id: dailySales.id, isAvailable: dailySales.isAvailable });
 
+    if (!updated) {
+      return { success: false, error: "Daily sale listing could not be updated." };
+    }
     return { success: true, data: { id: updated.id, isAvailable: updated.isAvailable } };
   } catch (error) {
     return { success: false, error: error.message || "Failed to update daily sale." };
