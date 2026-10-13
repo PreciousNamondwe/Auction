@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { auctionItems, auctionRegistrations, bids, payments } from "@/lib/db/schema";
-import { and, desc, eq, gt, inArray, asc } from "drizzle-orm";
+import { auctionItems, auctionRegistrations, auctionSettlements, bids, payments } from "@/lib/db/schema";
+import { and, asc, count, desc, eq, gt, inArray, sql, sum } from "drizzle-orm";
 
 /**
  * GET /api/dashboard/bidder
@@ -11,7 +11,7 @@ import { and, desc, eq, gt, inArray, asc } from "drizzle-orm";
  * including stats, recent bids, winning bids, upcoming auctions,
  * registrations, payments, and activity metrics.
  */
-export async function GET(request) {
+export async function GET() {
   try {
     // ── 1. AUTHENTICATION ──────────────────────────────────────────────
     const session = await auth();
@@ -24,6 +24,9 @@ export async function GET(request) {
     }
 
     const userId = Number(session.user.id);
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      return NextResponse.json({ error: "Invalid account." }, { status: 401 });
+    }
 
     // ── 2. FETCH ALL BIDS WITH RELATIONS ─────────────────────────────
     const allBids = await db.query.bids.findMany({
@@ -45,14 +48,22 @@ export async function GET(request) {
     const auctionItemIds = [...new Set(allBids.map((bid) => bid.auctionItemId))];
     const [allCurrentBids] = auctionItemIds.length
       ? await Promise.all([
-          db.select({ auctionItemId: bids.auctionItemId, amount: bids.amount, bidderId: bids.bidderId })
-            .from(bids).where(inArray(bids.auctionItemId, auctionItemIds)).orderBy(desc(bids.amount)),
+          db.select({ id: bids.id, auctionItemId: bids.auctionItemId, amount: bids.amount, bidderId: bids.bidderId })
+            .from(bids).where(inArray(bids.auctionItemId, auctionItemIds))
+            .orderBy(desc(bids.amount), desc(bids.createdAt), desc(bids.id)),
         ])
       : [[]];
     const highestBids = new Map();
     for (const bid of allCurrentBids) {
       if (!highestBids.has(bid.auctionItemId)) highestBids.set(bid.auctionItemId, bid);
     }
+    const settlements = auctionItemIds.length
+      ? await db.select({
+          auctionItemId: auctionSettlements.auctionItemId,
+          winnerId: auctionSettlements.winnerId,
+        }).from(auctionSettlements).where(inArray(auctionSettlements.auctionItemId, auctionItemIds))
+      : [];
+    const settlementByAuction = new Map(settlements.map((settlement) => [settlement.auctionItemId, settlement]));
 
     // ── 3. ENRICH BIDS WITH COMPUTED STATUS ──────────────────────────
     const enrichedBids = await Promise.all(
@@ -65,8 +76,11 @@ export async function GET(request) {
 
         let status;
         if (isAuctionClosed) {
-          status = highestBid?.bidderId === userId ? "WON" : "LOST";
-        } else if (highestBid?.bidderId === userId) {
+          const settlement = settlementByAuction.get(bid.auctionItemId);
+          status = settlement
+            ? settlement.winnerId === userId && highestBid?.id === bid.id ? "WON" : "LOST"
+            : "PENDING";
+        } else if (highestBid?.id === bid.id) {
           status = "WINNING";
         } else if (highestBid && Number(highestBid.amount) > Number(bid.amount)) {
           status = "OUTBID";
@@ -93,7 +107,9 @@ export async function GET(request) {
     );
 
     // ── 4. FETCH REGISTRATIONS ─────────────────────────────────────────
-    const registrations = await db.query.auctionRegistrations.findMany({
+    const now = new Date();
+    const [registrations, registrationTotals, approvedRegistrationTotals, activeRegistrationTotals, paymentTotals] = await Promise.all([
+      db.query.auctionRegistrations.findMany({
       where: eq(auctionRegistrations.userId, userId),
       with: {
         auctionItem: {
@@ -108,7 +124,25 @@ export async function GET(request) {
       },
       orderBy: [desc(auctionRegistrations.createdAt)],
       limit: 5,
-    });
+      }),
+      db.select({ total: count() }).from(auctionRegistrations).where(eq(auctionRegistrations.userId, userId)),
+      db.select({ total: count() }).from(auctionRegistrations).where(and(
+        eq(auctionRegistrations.userId, userId),
+        eq(auctionRegistrations.status, "APPROVED")
+      )),
+      db.select({ total: count() }).from(auctionRegistrations)
+        .innerJoin(auctionItems, eq(auctionRegistrations.auctionItemId, auctionItems.id))
+        .where(and(
+          eq(auctionRegistrations.userId, userId),
+          eq(auctionRegistrations.status, "APPROVED"),
+          gt(auctionItems.endTime, now)
+        )),
+      db.select({
+        total: count(),
+        successful: sql`count(*) filter (where lower(${payments.gatewayStatus}) in ('success', 'completed'))`,
+        spent: sum(sql`case when lower(${payments.gatewayStatus}) in ('success', 'completed') then ${payments.amount} else 0 end`),
+      }).from(payments).where(eq(payments.userId, userId)),
+    ]);
 
     const enrichedRegistrations = registrations.map((reg) => ({
       id: reg.id,
@@ -118,6 +152,7 @@ export async function GET(request) {
         id: reg.auctionItem.id,
         endTime: reg.auctionItem.endTime,
         status: reg.auctionItem.status,
+        liveRoomId: reg.auctionItem.liveRoomId,
         asset: reg.auctionItem.asset,
         images: reg.auctionItem.images,
       },
@@ -128,7 +163,6 @@ export async function GET(request) {
       .orderBy(desc(payments.createdAt)).limit(5);
 
     // ── 6. FETCH UPCOMING AUCTIONS ───────────────────────────────────
-    const now = new Date();
     const upcomingAuctions = await db.query.auctionItems.findMany({
       where: and(eq(auctionItems.status, "UPCOMING"), gt(auctionItems.startTime, now)),
       with: {
@@ -149,16 +183,12 @@ export async function GET(request) {
     const winningBids = enrichedBids.filter((b) => b.status === "WINNING");
     const outbidCount = enrichedBids.filter((b) => b.status === "OUTBID").length;
     const auctionsWon = enrichedBids.filter((b) => b.status === "WON").length;
-    const totalSpent = recentPayments.reduce((sum, p) => sum + Number(p.amount), 0);
-    const totalPayments = recentPayments.length;
-    const successfulPayments = recentPayments.filter(
-      (p) => p.gatewayStatus === "SUCCESS" || p.gatewayStatus === "COMPLETED"
-    ).length;
-    const totalRegistrations = registrations.length;
-    const approvedRegistrations = registrations.filter((r) => r.status === "APPROVED").length;
-    const activeRegistrations = registrations.filter(
-      (r) => r.status === "APPROVED" && new Date(r.auctionItem.endTime) > now
-    ).length;
+    const totalSpent = Number(paymentTotals[0]?.spent || 0);
+    const totalPayments = paymentTotals[0]?.total || 0;
+    const successfulPayments = Number(paymentTotals[0]?.successful || 0);
+    const totalRegistrations = registrationTotals[0]?.total || 0;
+    const approvedRegistrations = approvedRegistrationTotals[0]?.total || 0;
+    const activeRegistrations = activeRegistrationTotals[0]?.total || 0;
 
     // ── 8. BUILD RESPONSE ──────────────────────────────────────────────
     const dashboardData = {
@@ -174,7 +204,6 @@ export async function GET(request) {
         approvedRegistrations,
         activeRegistrations,
         upcomingAuctions: upcomingAuctions.length,
-        bidsTrend: totalBids > 5 ? 12 : totalBids > 0 ? 5 : 0, // placeholder trend
       },
       recentBids: enrichedBids.slice(0, 5),
       winningBids: winningBids.slice(0, 4),

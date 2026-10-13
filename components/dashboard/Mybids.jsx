@@ -10,7 +10,6 @@ import {
   ArrowUpRight,
   Search,
   Filter,
-  Loader2,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -23,15 +22,6 @@ export default function Mybids() {
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [page, setPage] = useState(1);
   const [meta, setMeta] = useState({ total: 0, totalPages: 1 });
-  const [stats, setStats] = useState({
-    totalBids: 0,
-    winning: 0,
-    outbid: 0,
-    won: 0,
-    lost: 0,
-    active: 0,
-  });
-
   // Fetch bids from API
   useEffect(() => {
     async function fetchMyBids() {
@@ -54,7 +44,6 @@ export default function Mybids() {
 
         setBids(json.data || []);
         setMeta(json.meta || { total: 0, totalPages: 1 });
-        setStats(json.stats || stats);
       } catch (err) {
         console.error("Failed to fetch bids:", err);
         setError(err.message);
@@ -81,6 +70,7 @@ export default function Mybids() {
       ACTIVE: "bg-amber-500/10 text-amber-600 border-amber-500/20",
       WON: "bg-violet-500/10 text-violet-600 border-violet-500/20",
       LOST: "bg-slate-500/10 text-slate-600 border-slate-500/20",
+      PENDING: "bg-amber-500/10 text-amber-600 border-amber-500/20",
     };
     return styles[status] || styles.ACTIVE;
   };
@@ -101,10 +91,10 @@ export default function Mybids() {
   };
 
   const formatCurrency = (amount) => {
-    if (amount === null || amount === undefined) return "$0.00";
+    if (amount === null || amount === undefined) return "MWK 0.00";
     return new Intl.NumberFormat("en-US", {
       style: "currency",
-      currency: "USD",
+      currency: "MWK",
       minimumFractionDigits: 2,
     }).format(Number(amount));
   };
@@ -197,7 +187,7 @@ export default function Mybids() {
           <Gavel className="w-12 h-12 text-[var(--color-muted)] mx-auto mb-3 opacity-50" />
           <p className="text-sm text-[var(--color-muted)] font-medium">No active bids yet</p>
           <p className="text-xs text-[var(--color-muted)] mt-1">Browse live auctions to start bidding</p>
-          <Link href="/live-auctions">
+          <Link href="/marketplace?tab=auctions">
             <button className="mt-4 bg-[var(--color-secondary)] hover:bg-[var(--color-primary)] text-white px-6 py-2.5 rounded-full text-sm font-bold transition-all hover:shadow-lg hover:shadow-[var(--color-primary)]/20">
               Browse Auctions
             </button>
@@ -240,6 +230,7 @@ export default function Mybids() {
             <option value="ACTIVE">Active</option>
             <option value="WON">Won</option>
             <option value="LOST">Lost</option>
+            <option value="PENDING">Settlement Pending</option>
           </select>
         </div>
       </div>
@@ -362,7 +353,9 @@ export default function Mybids() {
 
                 {/* Action */}
                 <td className="px-4 py-4 text-right">
-                  <Link href={`/auction/${bid.auctionItem.id}`}>
+                  <Link href={bid.auctionItem.liveRoomId
+                    ? `/auctions/live/${encodeURIComponent(bid.auctionItem.liveRoomId)}?id=${encodeURIComponent(bid.auctionItem.id)}`
+                    : "/marketplace?tab=auctions"}>
                     <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--color-secondary)]/10 text-[var(--color-secondary)] hover:bg-[var(--color-secondary)] hover:text-white transition-all">
                       <Eye className="w-3.5 h-3.5" />
                       View

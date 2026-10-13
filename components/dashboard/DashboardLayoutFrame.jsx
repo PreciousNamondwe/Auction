@@ -18,11 +18,11 @@ import {
   ShieldCheck,
   BarChart3,
   Settings,
-  Bell,
   Sun,
   Moon,
   ShoppingBag,
-  Home
+  Home,
+  Users,
 } from "lucide-react";
 
 // Component Registry Imports
@@ -37,8 +37,9 @@ import AuctioneerFinance from "@/components/dashboard/AuctioneerFinance";
 import Mybids from "./Mybids"
 import AdminAuctioneerManager from "@/components/dashboard/AdminAuctioneerManager";
 import AuctioneerPasswordChange from "@/components/dashboard/AuctioneerPasswordChange";
+import AdminUserManager from "@/components/dashboard/AdminUserManager";
 
-export default function DashboardLayoutFrame({ user, serializedAuctionItems, isAuctioneer, forceTab = null, addListingInitialMode = "property" }) {
+export default function DashboardLayoutFrame({ user, serializedAuctionItems, isAuctioneer, dashboardStats = null, forceTab = null, addListingInitialMode = "property" }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -145,6 +146,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
       "payments": isAuctioneer ? "Payments Received" : "Receipts",
       "reports": "Reports",
       "auctioneers": "Auctioneer Administration",
+      "users": "User Management",
       "settings": "Settings"
     };
     return labels[tab] || tab;
@@ -158,6 +160,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
     { id: "my-bids", icon: Gavel, label: "My Bids", show: isBidder },
     { id: "manage-listings", icon: FolderGit, label: "Manage Listings", show: isAuctioneer },
     { id: "auctioneers", icon: User, label: "Auctioneers", show: isAdmin },
+    { id: "users", icon: Users, label: "User Management", show: isAdmin },
     { id: "payments", icon: Wallet, label: isAuctioneer ? "Payments Received" : "Receipts", show: true },
     { id: "reports", icon: BarChart3, label: "Reports", show: isAuctioneer },
     { id: "settings", icon: Settings, label: "Settings", show: true },
@@ -266,12 +269,6 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
               {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
 
-            {/* Notification Bell */}
-            <button className="relative w-9 h-9 rounded-xl bg-[var(--color-input)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]/30 transition-all duration-300">
-              <Bell className="w-4 h-4" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-[var(--color-primary)] rounded-full animate-pulse" />
-            </button>
-
             {/* Desktop Logout */}
             <div className="hidden md:block">
               <button
@@ -368,6 +365,9 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
                     <button type="button" onClick={() => setActiveTab("auctioneers")} className="mt-4 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-bold text-white">
                       Manage auctioneers and refunds
                     </button>
+                    <button type="button" onClick={() => setActiveTab("users")} className="ml-3 mt-4 rounded-xl border border-[var(--color-primary)] px-4 py-2.5 text-sm font-bold text-[var(--color-primary)]">
+                      View and manage all users
+                    </button>
                   </div>
                 ) : isAuctioneer ? (
                   <div className="bg-[var(--color-card)] p-6 rounded-2xl border border-[var(--color-border)] shadow-sm space-y-4">
@@ -383,35 +383,19 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                      <div className="bg-[var(--color-input)] p-5 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)]/30 transition-all group">
-                        <p className="text-[10px] text-[var(--color-muted)] uppercase font-bold tracking-wider mb-2">Active Listings</p>
-                        <p className="text-3xl font-extrabold text-[var(--color-primary)] group-hover:scale-105 transition-transform">{liveCount}</p>
-                        <div className="w-full h-1 bg-[var(--color-border)] rounded-full mt-3 overflow-hidden">
-                          <div className="h-full bg-[var(--color-primary)] rounded-full" style={{ width: '65%' }} />
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                      {[
+                        ["Active Auctions", serializedAuctionItems.filter((item) => ["ACTIVE", "LIVE"].includes(item.status)).length],
+                        ["Total Bids", dashboardStats?.totalBids ?? 0],
+                        ["Paid Sales", dashboardStats?.completedSales ?? 0],
+                        ["Sales Revenue", `MWK ${Number(dashboardStats?.completedSalesRevenue || 0).toLocaleString()}`],
+                        ["Auction Success Rate", `${dashboardStats?.auctionSuccessRate ?? 0}%`],
+                      ].map(([label, value]) => (
+                        <div key={label} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-input)] p-5">
+                          <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">{label}</p>
+                          <p className="text-3xl font-extrabold text-[var(--color-primary)]">{value}</p>
                         </div>
-                      </div>
-                      <div className="bg-[var(--color-input)] p-5 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)]/30 transition-all group">
-                        <p className="text-[10px] text-[var(--color-muted)] uppercase font-bold tracking-wider mb-2">Total Bids</p>
-                        <p className="text-3xl font-extrabold text-[var(--color-primary)] group-hover:scale-105 transition-transform">1,240</p>
-                        <div className="w-full h-1 bg-[var(--color-border)] rounded-full mt-3 overflow-hidden">
-                          <div className="h-full bg-[var(--color-secondary)] rounded-full" style={{ width: '82%' }} />
-                        </div>
-                      </div>
-                      <div className="bg-[var(--color-input)] p-5 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)]/30 transition-all group">
-                        <p className="text-[10px] text-[var(--color-muted)] uppercase font-bold tracking-wider mb-2">Revenue</p>
-                        <p className="text-3xl font-extrabold text-[var(--color-primary)] group-hover:scale-105 transition-transform">MK 45M</p>
-                        <div className="w-full h-1 bg-[var(--color-border)] rounded-full mt-3 overflow-hidden">
-                          <div className="h-full bg-[var(--color-primary)] rounded-full" style={{ width: '45%' }} />
-                        </div>
-                      </div>
-                      <div className="bg-[var(--color-input)] p-5 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)]/30 transition-all group">
-                        <p className="text-[10px] text-[var(--color-muted)] uppercase font-bold tracking-wider mb-2">Success Rate</p>
-                        <p className="text-3xl font-extrabold text-[var(--color-primary)] group-hover:scale-105 transition-transform">98%</p>
-                        <div className="w-full h-1 bg-[var(--color-border)] rounded-full mt-3 overflow-hidden">
-                          <div className="h-full bg-[var(--color-secondary)] rounded-full" style={{ width: '98%' }} />
-                        </div>
-                      </div>
+                      ))}
                     </div>
                   </div>
                 ) : (
@@ -472,6 +456,10 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
               <AdminAuctioneerManager />
             )}
 
+            {activeTab === "users" && isAdmin && (
+              <AdminUserManager />
+            )}
+
             {/* Settings */}
             {activeTab === "settings" && (
               <div className="bg-[var(--color-card)] p-6 rounded-2xl border border-[var(--color-border)] shadow-sm max-w-2xl">
@@ -488,49 +476,22 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
                 <div className="space-y-4">
                   {isAuctioneer && <AuctioneerPasswordChange />}
 
-                  <div className="flex items-center justify-between p-4 bg-[var(--color-input)] rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)]/30 transition-all">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-[var(--color-secondary)]/20 flex items-center justify-center">
-                        <Bell className="w-4 h-4 text-[var(--color-primary)]" />
+                  <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-input)] p-4">
+                    <h3 className="text-sm font-bold text-[var(--color-text)]">Account details</h3>
+                    <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                      <div>
+                        <dt className="text-xs text-[var(--color-muted)]">Name</dt>
+                        <dd className="mt-1 font-semibold text-[var(--color-text)]">{user?.name || "Not provided"}</dd>
                       </div>
                       <div>
-                        <p className="text-sm font-semibold text-[var(--color-text)]">Email Notifications</p>
-                        <p className="text-[10px] text-[var(--color-muted)]">Bid updates and auction alerts</p>
-                      </div>
-                    </div>
-                    <div className="w-11 h-6 bg-[var(--color-secondary)] rounded-full relative cursor-pointer">
-                      <div className="absolute right-1 top-1 w-4 h-4 bg-white rounded-full shadow-sm" />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between p-4 bg-[var(--color-input)] rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)]/30 transition-all">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-[var(--color-input)] flex items-center justify-center border border-[var(--color-border)]">
-                        <ShieldCheck className="w-4 h-4 text-[var(--color-muted)]" />
+                        <dt className="text-xs text-[var(--color-muted)]">Email</dt>
+                        <dd className="mt-1 break-all font-semibold text-[var(--color-text)]">{user?.email || "Not provided"}</dd>
                       </div>
                       <div>
-                        <p className="text-sm font-semibold text-[var(--color-text)]">Two-Factor Authentication</p>
-                        <p className="text-[10px] text-[var(--color-muted)]">Secure your account with 2FA</p>
+                        <dt className="text-xs text-[var(--color-muted)]">Role</dt>
+                        <dd className="mt-1 font-semibold text-[var(--color-text)]">{user?.role || "BIDDER"}</dd>
                       </div>
-                    </div>
-                    <div className="w-11 h-6 bg-[var(--color-input)] border border-[var(--color-border)] rounded-full relative cursor-pointer">
-                      <div className="absolute left-1 top-1 w-4 h-4 bg-[var(--color-muted)] rounded-full shadow-sm" />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between p-4 bg-[var(--color-input)] rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)]/30 transition-all">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-[var(--color-input)] flex items-center justify-center border border-[var(--color-border)]">
-                        <User className="w-4 h-4 text-[var(--color-muted)]" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-[var(--color-text)]">Public Profile</p>
-                        <p className="text-[10px] text-[var(--color-muted)]">Make your profile visible to others</p>
-                      </div>
-                    </div>
-                    <div className="w-11 h-6 bg-[var(--color-secondary)] rounded-full relative cursor-pointer">
-                      <div className="absolute right-1 top-1 w-4 h-4 bg-white rounded-full shadow-sm" />
-                    </div>
+                    </dl>
                   </div>
                 </div>
               </div>

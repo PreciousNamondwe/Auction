@@ -4,22 +4,17 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   Gavel,
-  Eye,
   Clock,
   Trophy,
-  ArrowUpRight,
   TrendingUp,
   TrendingDown,
   Wallet,
   Receipt,
   Package,
   Calendar,
-  DollarSign,
   Activity,
   ChevronRight,
   AlertCircle,
-  Loader2,
-  User,
   Shield,
   Zap,
 } from "lucide-react";
@@ -56,13 +51,17 @@ export default function BidderDashboard() {
   }, []);
 
   const formatCurrency = (amount) => {
-    if (amount === null || amount === undefined) return "$0.00";
+    if (amount === null || amount === undefined) return "MWK 0.00";
     return new Intl.NumberFormat("en-US", {
       style: "currency",
-      currency: "USD",
+      currency: "MWK",
       minimumFractionDigits: 2,
     }).format(Number(amount));
   };
+
+  const getAuctionHref = (auctionItem) => auctionItem.liveRoomId
+    ? `/auctions/live/${encodeURIComponent(auctionItem.liveRoomId)}?id=${encodeURIComponent(auctionItem.id)}`
+    : "/marketplace?tab=auctions";
 
   const formatDate = (date) => {
     if (!date) return "N/A";
@@ -149,8 +148,6 @@ export default function BidderDashboard() {
     winningBids,
     upcomingAuctions,
     registeredAuctions,
-    recentPayments,
-    watchlistRecommendations,
   } = dashboard;
 
   // ── MAIN DASHBOARD ────────────────────────────────────────────────
@@ -164,7 +161,7 @@ export default function BidderDashboard() {
             Welcome back! Here is everything you need to track your auction activity.
           </p>
         </div>
-        <Link href="/live-auctions">
+        <Link href="/marketplace?tab=auctions">
           <button className="inline-flex items-center gap-2 bg-[var(--color-secondary)] hover:bg-[var(--color-primary)] text-white px-5 py-2.5 rounded-full text-sm font-bold transition-all hover:shadow-lg hover:shadow-[var(--color-primary)]/20">
             <Zap className="w-4 h-4" />
             Browse Auctions
@@ -179,7 +176,7 @@ export default function BidderDashboard() {
             label: "Total Bids",
             value: stats.totalBids,
             icon: Gavel,
-            trend: stats.bidsTrend,
+            trend: null,
             color: "text-blue-500",
             bg: "bg-blue-500/10",
           },
@@ -250,7 +247,7 @@ export default function BidderDashboard() {
                   Your latest bidding activity
                 </p>
               </div>
-              <Link href="/dashboard/my-bids">
+              <Link href="/dashboard?tab=my-bids">
                 <button className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--color-primary)] hover:underline">
                   View All
                   <ChevronRight className="w-3.5 h-3.5" />
@@ -366,7 +363,7 @@ export default function BidderDashboard() {
                         <p className="text-sm font-semibold text-amber-500">{getTimeRemaining(bid.auctionItem.endTime)}</p>
                       </div>
                     </div>
-                    <Link href={`/auction/${bid.auctionItem.id}`}>
+                    <Link href={getAuctionHref(bid.auctionItem)}>
                       <button className="w-full mt-3 py-2 rounded-lg text-xs font-semibold bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500 hover:text-white transition-all border border-emerald-500/20">
                         View Auction
                       </button>
@@ -390,7 +387,7 @@ export default function BidderDashboard() {
                     <p className="text-xs text-[var(--color-muted)]">Auctions starting soon you may be interested in</p>
                   </div>
                 </div>
-                <Link href="/live-auctions">
+                <Link href="/marketplace?tab=auctions">
                   <button className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--color-primary)] hover:underline">
                     View All
                     <ChevronRight className="w-3.5 h-3.5" />
@@ -436,7 +433,7 @@ export default function BidderDashboard() {
                           <p className="text-xs font-semibold text-blue-500">{formatDate(auction.startTime)}</p>
                         </div>
                       </div>
-                      <Link href={`/auction/${auction.id}`}>
+                      <Link href={getAuctionHref(auction)}>
                         <button className="w-full mt-3 py-2 rounded-lg text-xs font-semibold bg-[var(--color-secondary)]/10 text-[var(--color-secondary)] hover:bg-[var(--color-secondary)] hover:text-white transition-all">
                           View Details
                         </button>
@@ -447,6 +444,46 @@ export default function BidderDashboard() {
               </div>
             </div>
           )}
+
+          <div id="registered-auctions" className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm">
+            <div className="mb-5 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-[var(--color-text)]">My Registrations</h2>
+                <p className="mt-0.5 text-xs text-[var(--color-muted)]">
+                  {stats.totalRegistrations} registered auction{stats.totalRegistrations === 1 ? "" : "s"} · {stats.activeRegistrations} active
+                </p>
+              </div>
+              <Link href="/marketplace?tab=auctions" className="text-xs font-semibold text-[var(--color-primary)] hover:underline">
+                Browse auctions
+              </Link>
+            </div>
+            {registeredAuctions.length ? (
+              <div className="divide-y divide-[var(--color-border)]">
+                {registeredAuctions.map((registration) => (
+                  <div key={registration.id} className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-input)]">
+                        {registration.auctionItem.images?.[0]?.url
+                          ? <img src={registration.auctionItem.images[0].url} alt="" className="h-full w-full object-cover" loading="lazy" />
+                          : <Package className="h-5 w-5 text-[var(--color-muted)]" />}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-[var(--color-text)]">{registration.auctionItem.asset.title}</p>
+                        <p className="text-xs text-[var(--color-muted)]">{registration.auctionItem.asset.category} · {registration.status}</p>
+                      </div>
+                    </div>
+                    <Link href={getAuctionHref(registration.auctionItem)} className="shrink-0 text-xs font-semibold text-[var(--color-primary)] hover:underline">
+                      View auction
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-xl border border-dashed border-[var(--color-border)] p-6 text-center text-sm text-[var(--color-muted)]">
+                You have not registered for an auction yet.
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Right Column - Sidebar */}
@@ -456,10 +493,10 @@ export default function BidderDashboard() {
             <h2 className="text-sm font-bold text-[var(--color-text)] mb-4 uppercase tracking-wider">Quick Actions</h2>
             <div className="space-y-2">
               {[
-                { label: "Browse Auctions", href: "/live-auctions", icon: Gavel, color: "text-blue-500", bg: "bg-blue-500/10" },
-                { label: "My Bids", href: "/dashboard/my-bids", icon: Activity, color: "text-emerald-500", bg: "bg-emerald-500/10" },
+                { label: "Browse Auctions", href: "/marketplace?tab=auctions", icon: Gavel, color: "text-blue-500", bg: "bg-blue-500/10" },
+                { label: "My Bids", href: "/dashboard?tab=my-bids", icon: Activity, color: "text-emerald-500", bg: "bg-emerald-500/10" },
                 { label: "My Receipts", href: "/dashboard?tab=payments", icon: Receipt, color: "text-violet-500", bg: "bg-violet-500/10" },
-                { label: "My Registrations", href: "/dashboard/registrations", icon: Shield, color: "text-amber-500", bg: "bg-amber-500/10" },
+                { label: "My Registrations", href: "#registered-auctions", icon: Shield, color: "text-amber-500", bg: "bg-amber-500/10" },
               ].map((action) => (
                 <Link key={action.label} href={action.href}>
                   <div className="flex items-center gap-3 p-3 rounded-xl hover:bg-[var(--color-input)] transition-all group cursor-pointer">

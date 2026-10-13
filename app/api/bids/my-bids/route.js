@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { bids } from "@/lib/db/schema";
+import { auctionSettlements, bids } from "@/lib/db/schema";
 import { count, desc, eq, inArray } from "drizzle-orm";
 
 /**
@@ -58,12 +58,20 @@ export async function GET(request) {
     const auctionItemIds = [...new Set(userBids.map((bid) => bid.auctionItemId))];
     const [allCurrentBids, bidCounts] = auctionItemIds.length
       ? await Promise.all([
-          db.select({ auctionItemId: bids.auctionItemId, amount: bids.amount, bidderId: bids.bidderId })
-            .from(bids).where(inArray(bids.auctionItemId, auctionItemIds)).orderBy(desc(bids.amount)),
+          db.select({ id: bids.id, auctionItemId: bids.auctionItemId, amount: bids.amount, bidderId: bids.bidderId })
+            .from(bids).where(inArray(bids.auctionItemId, auctionItemIds))
+            .orderBy(desc(bids.amount), desc(bids.createdAt), desc(bids.id)),
           db.select({ auctionItemId: bids.auctionItemId, total: count() }).from(bids)
             .where(inArray(bids.auctionItemId, auctionItemIds)).groupBy(bids.auctionItemId),
         ])
       : [[], []];
+    const settlements = auctionItemIds.length
+      ? await db.select({
+          auctionItemId: auctionSettlements.auctionItemId,
+          winnerId: auctionSettlements.winnerId,
+        }).from(auctionSettlements).where(inArray(auctionSettlements.auctionItemId, auctionItemIds))
+      : [];
+    const settlementByAuction = new Map(settlements.map((settlement) => [settlement.auctionItemId, settlement]));
     const highestBids = new Map();
     for (const bid of allCurrentBids) {
       if (!highestBids.has(bid.auctionItemId)) highestBids.set(bid.auctionItemId, bid);
@@ -82,8 +90,11 @@ export async function GET(request) {
         // Compute status
         let status;
         if (isAuctionClosed) {
-          status = highestBid?.bidderId === userId ? "WON" : "LOST";
-        } else if (highestBid?.bidderId === userId) {
+          const settlement = settlementByAuction.get(bid.auctionItemId);
+          status = settlement
+            ? settlement.winnerId === userId && highestBid?.id === bid.id ? "WON" : "LOST"
+            : "PENDING";
+        } else if (highestBid?.id === bid.id) {
           status = "WINNING";
         } else if (highestBid && Number(highestBid.amount) > Number(bid.amount)) {
           status = "OUTBID";
@@ -105,6 +116,7 @@ export async function GET(request) {
             startTime: bid.auctionItem.startTime,
             endTime: bid.auctionItem.endTime,
             status: bid.auctionItem.status,
+            liveRoomId: bid.auctionItem.liveRoomId,
             liveRoomId: bid.auctionItem.liveRoomId,
             currentPrice: highestBid?.amount || bid.amount,
             totalBids: bidCountByItem.get(bid.auctionItemId) || 0,
