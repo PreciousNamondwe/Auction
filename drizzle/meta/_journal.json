@@ -29,6 +29,13 @@
       "when": 1791716033197,
       "tag": "0003_careless_mystique",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791916927897,
+      "tag": "0004_auction_admin_settlement_controls",
+      "breakpoints": true
     }
   ]
 }

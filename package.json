@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "seed:admin": "node scripts/seed-admin.mjs"
   },
   "dependencies": {
     "@livekit/components-react": "^2.9.21",

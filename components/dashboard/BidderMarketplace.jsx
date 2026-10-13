@@ -2,17 +2,18 @@
 
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import {
   Package,
   Home,
   Search,
   MapPin,
-  X,
   Tag,
   User,
   Gavel,
   Clock,
   ShoppingBag,
+  X,
 } from "lucide-react";
 import { formatDate } from "@/lib/payments";
 import { fetchUserProfile, initiatePayment, parseName } from "@/lib/payments";
@@ -27,15 +28,24 @@ const CALLBACK_URL = process.env.NEXT_PUBLIC_PAYCHANGU_CALLBACK_URL;
  *  - Daily Sales tab → regular sold commodities, searchable across all auctioneers.
  *  - Properties tab  → land & buildings, searchable by location.
  */
-export default function BidderMarketplace({ initialTab = "daily-sales" }) {
+export default function BidderMarketplace({ initialTab = "daily-sales", initialCategory = "", initialQuery = "" }) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState(initialTab === "properties" ? "properties" : "daily-sales");
-  const [searchQuery, setSearchQuery] = useState("");
+  const { data: session, status: sessionStatus } = useSession();
+  const [activeTab, setActiveTab] = useState(["properties", "auctions"].includes(initialTab) ? initialTab : "daily-sales");
+  const [searchQuery, setSearchQuery] = useState(initialQuery);
   const [locationQuery, setLocationQuery] = useState("");
+  const [category, setCategory] = useState(initialCategory);
+  const [auctioneerId, setAuctioneerId] = useState("");
+  const [listingType, setListingType] = useState("");
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
   const [items, setItems] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [auctioneers, setAuctioneers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [purchaseError, setPurchaseError] = useState("");
+  const [authPrompt, setAuthPrompt] = useState(false);
   const [purchasingId, setPurchasingId] = useState(null);
 
   const handlePurchase = async (item, kind) => {
@@ -64,7 +74,12 @@ export default function BidderMarketplace({ initialTab = "daily-sales" }) {
       if (!checkout.checkoutUrl) throw new Error("Payment provider did not return a checkout link.");
       window.location.assign(checkout.checkoutUrl);
     } catch (purchaseFailure) {
-      setPurchaseError(purchaseFailure.message || "Could not start purchase.");
+      const message = purchaseFailure.message || "Could not start purchase.";
+      if (message.includes("signed-in bidders")) {
+        setAuthPrompt(true);
+      } else {
+        setPurchaseError(message);
+      }
       setPurchasingId(null);
     }
   };
@@ -77,21 +92,25 @@ export default function BidderMarketplace({ initialTab = "daily-sales" }) {
       setError(null);
       try {
         const params = new URLSearchParams({ tab: activeTab });
-        if (activeTab === "daily-sales" && searchQuery.trim()) {
-          params.set("q", searchQuery.trim());
-        }
-        if (activeTab === "properties" && searchQuery.trim()) {
-          params.set("q", searchQuery.trim());
-        }
-        if (activeTab === "properties" && locationQuery.trim()) {
+        if (searchQuery.trim()) params.set("q", searchQuery.trim());
+        if (category) params.set("category", category);
+        if (auctioneerId) params.set("auctioneer", auctioneerId);
+        if (locationQuery.trim()) {
           params.set("location", locationQuery.trim());
         }
+        if (activeTab === "properties" && listingType) params.set("listingType", listingType);
+        if (minPrice !== "") params.set("minPrice", minPrice);
+        if (maxPrice !== "") params.set("maxPrice", maxPrice);
 
         const res = await fetch(`/api/marketplace?${params.toString()}`);
         const json = await res.json();
 
         if (!res.ok) throw new Error(json.error || "Failed to load listings");
-        if (!cancelled) setItems(json.items || []);
+        if (!cancelled) {
+          setItems(json.items || []);
+          setCategories(json.categories || []);
+          setAuctioneers(json.auctioneers || []);
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err.message);
@@ -107,7 +126,7 @@ export default function BidderMarketplace({ initialTab = "daily-sales" }) {
       cancelled = true;
       clearTimeout(debounce);
     };
-  }, [activeTab, searchQuery, locationQuery]);
+  }, [activeTab, searchQuery, locationQuery, category, auctioneerId, listingType, minPrice, maxPrice]);
 
   const formatMoney = (value) =>
     value === null || value === undefined || isNaN(Number(value))
@@ -127,14 +146,18 @@ export default function BidderMarketplace({ initialTab = "daily-sales" }) {
             <h2 className="text-sm sm:text-base font-black tracking-tight flex items-center gap-2">
               {activeTab === "daily-sales" ? (
                 <><ShoppingBag className="w-5 h-5" /> Daily Sales</>
-              ) : (
+              ) : activeTab === "properties" ? (
                 <><Home className="w-5 h-5" /> Properties</>
+              ) : (
+                <><Gavel className="w-5 h-5" /> Auctions</>
               )}
             </h2>
             <p className="text-[11px] sm:text-xs text-[var(--color-bg)]/70 max-w-xl leading-relaxed">
               {activeTab === "daily-sales"
                 ? "Browse regular sold commodities — goods uploaded for quick daily sales by every auctioneer on the system."
-                : "Explore land and buildings from all registered auctioneers. Search by location to find property near you."}
+                : activeTab === "properties"
+                  ? "Explore land and buildings from all registered auctioneers. Filter by price, location, category, auctioneer, and sale or lease."
+                  : "Browse scheduled and live auctions. Sign in as a bidder to join and place bids."}
             </p>
           </div>
           <div className="bg-white/20 backdrop-blur-sm border border-white/30 rounded-xl px-5 py-3 shrink-0 self-start sm:self-center">
@@ -166,15 +189,25 @@ export default function BidderMarketplace({ initialTab = "daily-sales" }) {
         >
           <Home className="w-3.5 h-3.5" /> Properties
         </button>
+        <button
+          onClick={() => setActiveTab("auctions")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+            activeTab === "auctions"
+              ? "bg-[var(--color-secondary)] text-white shadow-sm"
+              : "text-[var(--color-muted)] hover:text-[var(--color-text)]"
+          }`}
+        >
+          <Gavel className="w-3.5 h-3.5" /> Auctions
+        </button>
       </div>
 
       {/* Search bars */}
-      {activeTab === "daily-sales" ? (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="relative">
           <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)]" />
           <input
             type="text"
-            placeholder="Search for goods across all auctioneers — e.g. vehicle, electronics..."
+            placeholder={activeTab === "daily-sales" ? "Search goods..." : "Search listings..."}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl pl-10 pr-10 py-2.5 text-sm text-[var(--color-text)] placeholder-[var(--color-muted)] focus:outline-none focus:border-[var(--color-primary)]/40 focus:ring-1 focus:ring-[var(--color-primary)]/20 transition-all"
@@ -188,46 +221,36 @@ export default function BidderMarketplace({ initialTab = "daily-sales" }) {
             </button>
           )}
         </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)]" />
-            <input
-              type="text"
-              placeholder="Search properties by name or type..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl pl-10 pr-10 py-2.5 text-sm text-[var(--color-text)] placeholder-[var(--color-muted)] focus:outline-none focus:border-[var(--color-primary)]/40 focus:ring-1 focus:ring-[var(--color-primary)]/20 transition-all"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)] hover:text-[var(--color-text)]"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-          <div className="relative">
-            <MapPin className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--color-primary)]" />
-            <input
-              type="text"
-              placeholder="Search by location — e.g. Lilongwe, Blantyre..."
-              value={locationQuery}
-              onChange={(e) => setLocationQuery(e.target.value)}
-              className="w-full bg-[var(--color-card)] border border-[var(--color-primary)]/25 rounded-xl pl-10 pr-10 py-2.5 text-sm text-[var(--color-text)] placeholder-[var(--color-muted)] focus:outline-none focus:border-[var(--color-primary)]/50 focus:ring-1 focus:ring-[var(--color-primary)]/25 transition-all"
-            />
-            {locationQuery && (
-              <button
-                onClick={() => setLocationQuery("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)] hover:text-[var(--color-text)]"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
+        <div className="relative">
+          <MapPin className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--color-primary)]" />
+          <input
+            type="text"
+            placeholder="Filter by location"
+            value={locationQuery}
+            onChange={(e) => setLocationQuery(e.target.value)}
+            className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] py-2.5 pl-10 pr-4 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+          />
         </div>
-      )}
+        <select value={category} onChange={(event) => setCategory(event.target.value)} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2.5 text-sm text-[var(--color-text)]">
+          <option value="">All categories</option>
+          {categories.map((itemCategory) => <option key={itemCategory} value={itemCategory}>{itemCategory}</option>)}
+        </select>
+        <select value={auctioneerId} onChange={(event) => setAuctioneerId(event.target.value)} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2.5 text-sm text-[var(--color-text)]">
+          <option value="">All auctioneers</option>
+          {auctioneers.map((auctioneer) => <option key={auctioneer.id} value={auctioneer.id}>{auctioneer.name}</option>)}
+        </select>
+        {activeTab === "properties" && (
+          <select value={listingType} onChange={(event) => setListingType(event.target.value)} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2.5 text-sm text-[var(--color-text)]">
+            <option value="">For sale or lease</option>
+            <option value="SALE">For sale</option>
+            <option value="LEASE">For lease</option>
+          </select>
+        )}
+        <div className="grid grid-cols-2 gap-2">
+          <input aria-label="Minimum price" type="number" min="0" placeholder="Min price" value={minPrice} onChange={(event) => setMinPrice(event.target.value)} className="min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2.5 text-sm text-[var(--color-text)]" />
+          <input aria-label="Maximum price" type="number" min="0" placeholder="Max price" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} className="min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2.5 text-sm text-[var(--color-text)]" />
+        </div>
+      </div>
 
       {/* Results */}
       {loading ? (
@@ -248,11 +271,13 @@ export default function BidderMarketplace({ initialTab = "daily-sales" }) {
         <div className="bg-[var(--color-card)] border border-dashed border-[var(--color-border)] rounded-2xl p-12 text-center">
           {activeTab === "daily-sales" ? (
             <Package className="w-12 h-12 text-[var(--color-muted)] mx-auto mb-4 opacity-50" />
-          ) : (
+          ) : activeTab === "properties" ? (
             <Home className="w-12 h-12 text-[var(--color-muted)] mx-auto mb-4 opacity-50" />
+          ) : (
+            <Gavel className="w-12 h-12 text-[var(--color-muted)] mx-auto mb-4 opacity-50" />
           )}
           <p className="text-sm text-[var(--color-muted)] font-medium">
-            {searchQuery || locationQuery
+            {searchQuery || locationQuery || category || auctioneerId || minPrice || maxPrice || listingType
               ? "No listings match your search. Try different keywords."
               : "No listings published yet. Check back soon!"}
           </p>
@@ -275,8 +300,10 @@ export default function BidderMarketplace({ initialTab = "daily-sales" }) {
                   <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-[var(--color-card)] to-[var(--color-input)]">
                     {activeTab === "daily-sales" ? (
                       <Package className="w-10 h-10 text-[var(--color-muted)] opacity-30" />
-                    ) : (
+                    ) : activeTab === "properties" ? (
                       <Home className="w-10 h-10 text-[var(--color-muted)] opacity-30" />
+                    ) : (
+                      <Gavel className="w-10 h-10 text-[var(--color-muted)] opacity-30" />
                     )}
                   </div>
                 )}
@@ -337,7 +364,20 @@ export default function BidderMarketplace({ initialTab = "daily-sales" }) {
                       {item.listingType === "LEASE" && <span className="ml-1 text-[10px] font-semibold">/ month</span>}
                     </p>
                   </div>
-                  {activeTab === "properties" && item.listingType === "AUCTION" && item.auctionItemId ? (
+                  {activeTab === "auctions" ? (
+                    <button
+                      onClick={() => {
+                        const destination = "/dashboard?tab=live-auctions";
+                        router.push(session?.user
+                          ? destination
+                          : `/login?callbackUrl=${encodeURIComponent(destination)}`);
+                      }}
+                      disabled={sessionStatus === "loading"}
+                      className="flex items-center gap-1 rounded-xl bg-[var(--color-primary)] px-3 py-2 text-[11px] font-bold text-white"
+                    >
+                      <Gavel className="h-3.5 w-3.5" /> {session?.user ? "View and bid" : "Sign in to bid"}
+                    </button>
+                  ) : activeTab === "properties" && item.listingType === "AUCTION" && item.auctionItemId ? (
                     <button
                       onClick={() => router.push("/dashboard?tab=live-auctions")}
                       className="flex items-center gap-1 px-3 py-2 bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white rounded-xl text-[11px] font-bold transition-all active:scale-95"
@@ -360,6 +400,19 @@ export default function BidderMarketplace({ initialTab = "daily-sales" }) {
         </div>
       )}
       {purchaseError && <p className="text-sm text-red-400" role="alert">{purchaseError}</p>}
+      {authPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" aria-labelledby="purchase-auth-title">
+          <div className="w-full max-w-sm space-y-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-6">
+            <h2 id="purchase-auth-title" className="text-lg font-bold text-[var(--color-text)]">Sign in to continue</h2>
+            <p className="text-sm text-[var(--color-muted)]">Create a bidder account or sign in before purchasing this listing.</p>
+            <div className="flex gap-3">
+              <button type="button" onClick={() => setAuthPrompt(false)} className="flex-1 rounded-xl border border-[var(--color-border)] px-3 py-2 text-sm font-semibold">Cancel</button>
+              <button type="button" onClick={() => router.push(`/login?callbackUrl=${encodeURIComponent(window.location.pathname + window.location.search)}`)} className="flex-1 rounded-xl bg-[var(--color-primary)] px-3 py-2 text-sm font-bold text-white">Sign in</button>
+              <button type="button" onClick={() => router.push(`/signup?callbackUrl=${encodeURIComponent(window.location.pathname + window.location.search)}`)} className="flex-1 rounded-xl bg-[var(--color-secondary)] px-3 py-2 text-sm font-bold text-white">Register</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

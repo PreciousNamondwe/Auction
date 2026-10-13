@@ -8,9 +8,18 @@ export async function POST(req) {
   try {
     const body = await req.json();
     // Destructure 'phone' from the frontend payload
-    const { password, name, phone, role } = body;
+    const { password, name, phone } = body;
     const normalizedEmail = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-    if (!normalizedEmail || typeof password !== "string" || !password || !name) {
+    if (
+      !normalizedEmail ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) ||
+      typeof password !== "string" ||
+      password.length < 8 ||
+      typeof name !== "string" ||
+      !name.trim() ||
+      typeof phone !== "string" ||
+      phone.trim().length > 20
+    ) {
       return NextResponse.json({ message: "Name, email, and password are required." }, { status: 400 });
     }
 
@@ -27,8 +36,8 @@ export async function POST(req) {
       email: normalizedEmail,
       name,
       password: hashedPassword,
-      role: role || "BIDDER",
-      phoneNumber: phone || "",
+      role: "BIDDER",
+      phoneNumber: phone.trim(),
     }).returning({ id: users.id });
 
     return NextResponse.json({ success: true, userId: newUser.id }, { status: 201 });

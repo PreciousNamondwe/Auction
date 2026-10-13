@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
-import { Loader2, LayoutGrid, ArrowRight, Hourglass, RotateCcw, Sparkles, Users, Power, Eye, CalendarPlus } from "lucide-react";
-import { getLiveKitToken, updateAuctionToLiveDirectly, closeLiveAuctionDirectly } from "@/app/actions/liveAuction";
+import { Loader2, LayoutGrid, ArrowRight, Hourglass, Users, Power, Eye, CalendarPlus, Clock3 } from "lucide-react";
+import { getLiveKitToken, updateAuctionToLiveDirectly, closeLiveAuctionDirectly, updateAuctionControls } from "@/app/actions/liveAuction";
 import { hasClearedAuctionGate } from "@/app/actions/auctionAccess";
 import AuctionAccessGate from "@/components/dashboard/AuctionAccessGate";
 import { useRouter } from "next/navigation";
@@ -11,8 +11,6 @@ export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate
   const router = useRouter();
   
   const [itemsList, setItemsList] = useState(auctionItems);
-  const [selectedInventoryId, setSelectedInventoryId] = useState("");
-  const [isReinitializing, setIsReinitializing] = useState(false);
   const [isInitializingId, setIsInitializingId] = useState(null); 
   const [isActionLoadingId, setIsActionLoadingId] = useState(null);
   const [gateAuction, setGateAuction] = useState(null);
@@ -49,12 +47,7 @@ export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate
   const handleDirectLiveInitialization = async (itemId) => {
     if (!itemId) return;
     try {
-      const isDropdownSelect = itemId === selectedInventoryId;
-      if (isDropdownSelect) {
-        setIsReinitializing(true);
-      } else {
-        setIsInitializingId(itemId);
-      }
+      setIsInitializingId(itemId);
       
       const computedRoomId = `room-lot-${itemId}-${Date.now()}`;
       const updateResult = await updateAuctionToLiveDirectly(itemId, computedRoomId);
@@ -66,7 +59,6 @@ export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate
         item.id === Number(itemId) ? { ...item, status: "ACTIVE", liveRoomId: computedRoomId } : item
       );
       syncItemsList(updated);
-      setSelectedInventoryId("");
       await enterLiveRoom(computedRoomId, Number(itemId));
     } catch (err) {
       if (err.message.includes("Failed to fetch") || err.message.includes("signal connection") || err.message.includes("timeout")) {
@@ -76,8 +68,23 @@ export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate
         alert("Database initialization rejected: " + err.message);
       }
     } finally {
-      setIsReinitializing(false);
       setIsInitializingId(null);
+    }
+  };
+
+  const handleUpdateAuctionControls = async (item, controls) => {
+    try {
+      setIsActionLoadingId(item.id);
+      const result = await updateAuctionControls(item.id, controls);
+      if (!result?.success) throw new Error(result?.error || "Could not update auction controls.");
+      syncItemsList(itemsList.map((candidate) => candidate.id === item.id
+        ? { ...candidate, ...result.data }
+        : candidate));
+      if (result.notificationError) alert(result.notificationError);
+    } catch (error) {
+      alert(error.message || "Could not update auction controls.");
+    } finally {
+      setIsActionLoadingId(null);
     }
   };
 
@@ -109,7 +116,10 @@ export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate
       }
       const updated = itemsList.map(item => item.id === itemId ? { ...item, status: "CLOSED" } : item);
       syncItemsList(updated);
-      alert(`🛑 Lot #${itemId} is now CLOSED.`);
+      const pendingRefunds = result.settlement?.refundCount || 0;
+      const emailWarnings = result.settlement?.emailResult?.errors || [];
+      const warnings = [...emailWarnings, result.closeNotificationError].filter(Boolean);
+      alert(`Lot #${itemId} is closed. ${pendingRefunds} bidder refund(s) are queued for administrator processing.${warnings.length ? ` Warnings: ${warnings.join(" ")}` : ""}`);
     } catch (err) {
       alert("Failed to close remote instance block: " + err.message);
     } finally {
@@ -145,49 +155,16 @@ export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate
         />
       )}
       
-      {/* 🔄 RELAUNCH ENGINE CONTAINER */}
-      <div className="bg-[var(--color-card)] text-[var(--color-text)] rounded-2xl p-4 md:p-5 border border-[var(--color-border)] shadow-xl space-y-4">
-        <div className="flex items-center gap-2 border-b border-[var(--color-border)] pb-2">
-          <RotateCcw className="w-4 h-4 text-[var(--color-primary)]" />
-          <h3 className="text-xs font-black tracking-wider uppercase text-[var(--color-text)]">Live Relaunch Terminal</h3>
-        </div>
-        <p className="text-[11px] text-[var(--color-muted)] leading-relaxed">
-          Select any closed asset to transition it back to <span className="text-emerald-400 font-bold">ACTIVE</span>.
-        </p>
-        <div className="flex flex-col gap-3 md:flex-row">
-          <select 
-            value={selectedInventoryId} 
-            onChange={(e) => setSelectedInventoryId(e.target.value)}
-            className="w-full bg-[var(--color-input)] border border-[var(--color-border)] rounded-xl px-3 py-2.5 text-xs text-[var(--color-text)] focus:outline-none"
-          >
-            <option value="">-- Select Asset to Relaunch --</option>
-            {itemsList.map((item) => (
-              <option key={item.id} value={item.id}>
-                Lot #{item.id} - {item.asset?.title || "No Title"} [{item.status || "SAVED"}]
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => handleDirectLiveInitialization(selectedInventoryId)}
-            disabled={!selectedInventoryId || isReinitializing}
-            className="w-full md:w-auto px-5 py-2.5 bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-black uppercase tracking-wider rounded-xl flex items-center justify-center gap-2 transition-colors shrink-0"
-          >
-            {isReinitializing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <><Sparkles className="w-3.5 h-3.5" /> Launch</>}
-          </button>
-        </div>
-      </div>
-
       {/* 📋 CAMPAIGNS BLOCK */}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
           <LayoutGrid className="w-4 h-4 text-[var(--color-muted)]" />
-          <h3 className="text-xs font-black tracking-wider uppercase text-[var(--color-muted)]">Active Campaigns Block ({visibleActiveItems.length})</h3>
+          <h3 className="text-xs font-black tracking-wider uppercase text-[var(--color-muted)]">Scheduled &amp; Live Auctions ({visibleActiveItems.length})</h3>
         </div>
 
         {visibleActiveItems.length === 0 ? (
           <div className="bg-[var(--color-card)] border border-dashed border-[var(--color-border)] rounded-2xl p-8 text-center text-xs text-[var(--color-muted)]">
-            No active campaigns running right now. Use the terminal above to relaunch items.
+            No scheduled or live auctions. Use Schedule Auction to create one.
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -219,6 +196,16 @@ export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate
                       <div>Starting Bid: <span className="font-bold text-[var(--color-text)]">MWK {Number(item.startingBid).toLocaleString()}</span></div>
                       <div>Reserve price: <span className="font-bold text-[var(--color-primary)]">MWK {Number(item.reservePrice).toLocaleString()}</span></div>
                     </div>
+                    <label className="flex items-center gap-2 pt-2 text-xs font-semibold text-[var(--color-text)]">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(item.reservePriceDisclosed)}
+                        disabled={isActionLoadingId !== null}
+                        onChange={(event) => handleUpdateAuctionControls(item, { reservePriceDisclosed: event.target.checked })}
+                        className="accent-[var(--color-primary)]"
+                      />
+                      Disclose reserve price to bidders
+                    </label>
                   </div>
 
                   <div className="pt-2 flex flex-col gap-2">
@@ -237,6 +224,22 @@ export default function AuctioneerLiveConsole({ auctionItems = [], onItemsUpdate
                       </button>
                     ) : (
                       <div className="space-y-2 w-full">
+                        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-input)] p-3">
+                          <p className="mb-2 flex items-center gap-1 text-[10px] font-bold uppercase text-[var(--color-muted)]"><Clock3 className="h-3 w-3" /> Extend bidding time</p>
+                          <div className="grid grid-cols-3 gap-2">
+                            {[5, 10, 20].map((seconds) => (
+                              <button
+                                key={seconds}
+                                type="button"
+                                onClick={() => handleUpdateAuctionControls(item, { extendSeconds: seconds })}
+                                disabled={isActionLoadingId !== null}
+                                className="rounded-lg border border-[var(--color-border)] px-2 py-1.5 text-[10px] font-bold text-[var(--color-text)] hover:border-[var(--color-primary)] disabled:opacity-50"
+                              >
+                                +{seconds}s
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                         <div className="text-[11px] font-bold text-emerald-400 bg-emerald-500/10 w-full rounded-xl py-2 px-3 flex items-center justify-between border border-emerald-500/20">
                           <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5 animate-pulse" /> Lobby Live</span>
                           <span className="text-[10px] text-[var(--color-muted)] font-medium">Bidders Live</span>

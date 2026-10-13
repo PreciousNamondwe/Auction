@@ -31,7 +31,7 @@ export default function LiveRoomPage({ params }) {
   const [bidError, setBidError] = useState("");
   const [bidAmount, setBidAmount] = useState("");
   const [isPlacingBid, setIsPlacingBid] = useState(false);
-  const [participants, setParticipants] = useState(8);
+  const [participants, setParticipants] = useState(0);
   const [bidSuccess, setBidSuccess] = useState("");
   const [isLoading, setIsLoading] = useState(true);
 
@@ -53,7 +53,7 @@ export default function LiveRoomPage({ params }) {
           setAuctionItem(res.data);
           setBids(res.data.bids || []);
           setHighestBid(res.data.currentHighestBid || Number(res.data.startingBid));
-          setParticipants(res.data.participantCount || 8);
+          setParticipants(res.data.participantCount || 0);
 
           const end = new Date(res.data.endTime);
           const now = new Date();
@@ -115,6 +115,17 @@ export default function LiveRoomPage({ params }) {
         return [incomingBid, ...prev];
       });
       setHighestBid(Number(incomingBid.amount));
+    });
+    channel.bind("auction-control-updated", (controls) => {
+      setAuctionItem((current) => current ? {
+        ...current,
+        endTime: controls.endTime || current.endTime,
+        reservePriceDisclosed: Boolean(controls.reservePriceDisclosed),
+      } : current);
+    });
+    channel.bind("auction-closed", () => {
+      setIsAuctionClosed(true);
+      setTimeLeft("00:00:00");
     });
 
     return () => {
@@ -197,6 +208,14 @@ export default function LiveRoomPage({ params }) {
   }, [auctionItem?.maximumBid, isAuctionClosed]);
 
   const handleLeaveRoom = () => router.push("/dashboard");
+
+  const leadingBidders = new Map();
+  for (const bid of [...bids].sort((left, right) => Number(right.amount) - Number(left.amount))) {
+    if (bid.bidderId !== undefined && bid.bidderId !== null && !leadingBidders.has(bid.bidderId)) {
+      leadingBidders.set(bid.bidderId, bid);
+    }
+  }
+  const leaderboard = [...leadingBidders.values()].slice(0, 5);
 
   if (!isLoading && bidError && (!token || !auctionItem)) {
     return (
@@ -343,6 +362,12 @@ export default function LiveRoomPage({ params }) {
                 </p>
               </div>
             </div>
+            {auctionItem.reservePrice !== null && auctionItem.reservePrice !== undefined && (
+              <div className="rounded-xl border p-3 text-sm" style={{ backgroundColor: "var(--color-card)", borderColor: "var(--color-border)" }}>
+                <span style={{ color: "var(--color-muted)" }}>Reserve price: </span>
+                <strong style={{ color: "var(--color-primary)" }}>MWK {Number(auctionItem.reservePrice).toLocaleString()}</strong>
+              </div>
+            )}
           </div>
         </div>
 
@@ -360,6 +385,41 @@ export default function LiveRoomPage({ params }) {
             <p className="text-[10px] mt-1.5" style={{ color: "var(--color-muted)" }}>
               {bids.length} total bids
             </p>
+          </div>
+
+          {!isAuctioneer && (
+            <div className="rounded-2xl border p-4" style={{ backgroundColor: "var(--color-card)", borderColor: "var(--color-border)" }}>
+              <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: "var(--color-muted)" }}>Remaining deposit balance</p>
+              <p className="mt-1 text-xl font-black font-mono" style={{ color: "var(--color-primary)" }}>
+                MWK {Number(auctionItem.bidderBalance || 0).toLocaleString()}
+              </p>
+              <p className="mt-1 text-[10px]" style={{ color: "var(--color-muted)" }}>
+                {auctionItem.refundStatus === "PENDING"
+                  ? "Refund pending administrator payout through PayChangu."
+                  : auctionItem.refundStatus === "PROCESSED"
+                    ? "Refund marked paid by the administrator."
+                    : "Your paid bidding deposit less your leading bid."}
+              </p>
+            </div>
+          )}
+
+          {/* Current bidder leaderboard */}
+          <div className="rounded-2xl border p-4" style={{ backgroundColor: "var(--color-card)", borderColor: "var(--color-border)" }}>
+            <p className="mb-3 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--color-primary)" }}>
+              <Crown size={13} /> Leading bidders
+            </p>
+            {leaderboard.length === 0 ? (
+              <p className="text-xs" style={{ color: "var(--color-muted)" }}>No bids have been placed yet.</p>
+            ) : (
+              <ol className="space-y-2">
+                {leaderboard.map((bid, index) => (
+                  <li key={bid.bidderId} className="flex items-center justify-between text-xs">
+                    <span className="truncate pr-2" style={{ color: "var(--color-text)" }}>{index + 1}. {bid.bidderName || "Bidder"}</span>
+                    <strong className="shrink-0 font-mono" style={{ color: index === 0 ? "var(--color-primary)" : "var(--color-muted)" }}>MWK {Number(bid.amount).toLocaleString()}</strong>
+                  </li>
+                ))}
+              </ol>
+            )}
           </div>
 
           {/* Bid Form or Results */}

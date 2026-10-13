@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/rent-reminders",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/auction-settlements",
+      "schedule": "* * * * *"
     }
   ]
 }

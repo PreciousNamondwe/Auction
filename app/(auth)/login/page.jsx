@@ -33,12 +33,31 @@ export default function LoginPage() {
             : "Sign-in could not be completed. Please try again."
         );
       } else {
-        router.push("/dashboard");
+        const callbackUrl = new URLSearchParams(window.location.search).get("callbackUrl");
+        const destination = callbackUrl?.startsWith("/") && !callbackUrl.startsWith("//")
+          ? callbackUrl
+          : "/dashboard";
+        router.push(destination);
         router.refresh();
       }
     } catch {
       setError("Sign-in could not be completed. Please try again.");
     } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      const callbackUrl = new URLSearchParams(window.location.search).get("callbackUrl");
+      const redirectTo = callbackUrl?.startsWith("/") && !callbackUrl.startsWith("//")
+        ? callbackUrl
+        : "/dashboard";
+      await signIn("google", { redirectTo });
+    } catch {
+      setError("Google sign-in could not be started. Please try again.");
       setLoading(false);
     }
   };
@@ -133,8 +152,9 @@ export default function LoginPage() {
         {/* Google Auth */}
         <button 
           type="button" 
-          onClick={() => signIn("google", { callbackUrl: "/" })}
-          className="w-full flex items-center justify-center gap-3 border border-[var(--color-border)] hover:bg-[var(--color-input)] text-[var(--color-text)] font-semibold text-sm rounded-xl py-2.5 transition-all duration-300"
+          onClick={handleGoogleSignIn}
+          disabled={loading}
+          className="w-full flex items-center justify-center gap-3 border border-[var(--color-border)] hover:bg-[var(--color-input)] text-[var(--color-text)] font-semibold text-sm rounded-xl py-2.5 transition-all duration-300 disabled:cursor-wait disabled:opacity-60"
         >
           <Image 
             src="/google.svg" 
@@ -143,7 +163,7 @@ export default function LoginPage() {
             height={18} 
             priority
           />
-          Continue with Google
+          {loading ? "Connecting to Google..." : "Continue with Google"}
         </button>
 
         <p className="text-center text-sm text-[var(--color-muted)] mt-6">

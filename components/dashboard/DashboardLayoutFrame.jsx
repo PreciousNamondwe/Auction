@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import Link from "next/link";
+import { signOut } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "@/app/providers";
 import { confirmAuctionAccessPayment, hasClearedAuctionGate } from "@/app/actions/auctionAccess";
@@ -35,16 +35,24 @@ import BidderMarketplace from "@/components/dashboard/BidderMarketplace";
 import PaymentHistory from "@/components/dashboard/PaymentHistory";
 import AuctioneerFinance from "@/components/dashboard/AuctioneerFinance";
 import Mybids from "./Mybids"
+import AdminAuctioneerManager from "@/components/dashboard/AdminAuctioneerManager";
+import AuctioneerPasswordChange from "@/components/dashboard/AuctioneerPasswordChange";
 
 export default function DashboardLayoutFrame({ user, serializedAuctionItems, isAuctioneer, forceTab = null, addListingInitialMode = "property" }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [activeTab, setActiveTab] = useState(forceTab || searchParams.get("tab") || "live-auctions");
+  const [activeTab, setActiveTab] = useState(forceTab || searchParams.get("tab") || (user?.role === "ADMIN" ? "dashboard" : "live-auctions"));
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
-  const [liveCountState, setLiveCountState] = useState(0);
   const [accessPaymentMessage, setAccessPaymentMessage] = useState("");
   const { theme, toggleTheme } = useTheme();
+  const isAdmin = user?.role === "ADMIN";
+  const isBidder = user?.role === "BIDDER";
+
+  const handleLogout = async () => {
+    await signOut({ redirect: false });
+    window.location.replace(window.location.origin);
+  };
 
   const dropdownRef = useRef(null);
   const handledPaymentReturn = useRef("");
@@ -136,6 +144,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
       "add-listing": "Add Listing",
       "payments": isAuctioneer ? "Payments Received" : "Receipts",
       "reports": "Reports",
+      "auctioneers": "Auctioneer Administration",
       "settings": "Settings"
     };
     return labels[tab] || tab;
@@ -143,11 +152,12 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
 
   const navItems = [
     { id: "dashboard", icon: LayoutDashboard, label: "Dashboard", show: true },
-    { id: "live-auctions", icon: Tv, label: isAuctioneer ? "Auctions" : "Live Auction Floor", show: true, badge: liveCount },
-    { id: "daily-sales", icon: ShoppingBag, label: "Daily Sales", show: !isAuctioneer },
-    { id: "properties", icon: Home, label: "Properties", show: !isAuctioneer },
-    { id: "my-bids", icon: Gavel, label: "My Bids", show: !isAuctioneer },
+    { id: "live-auctions", icon: Tv, label: isAuctioneer ? "Auctions" : "Live Auction Floor", show: !isAdmin, badge: liveCount },
+    { id: "daily-sales", icon: ShoppingBag, label: "Daily Sales", show: isBidder },
+    { id: "properties", icon: Home, label: "Properties", show: isBidder },
+    { id: "my-bids", icon: Gavel, label: "My Bids", show: isBidder },
     { id: "manage-listings", icon: FolderGit, label: "Manage Listings", show: isAuctioneer },
+    { id: "auctioneers", icon: User, label: "Auctioneers", show: isAdmin },
     { id: "payments", icon: Wallet, label: isAuctioneer ? "Payments Received" : "Receipts", show: true },
     { id: "reports", icon: BarChart3, label: "Reports", show: isAuctioneer },
     { id: "settings", icon: Settings, label: "Settings", show: true },
@@ -264,9 +274,13 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
 
             {/* Desktop Logout */}
             <div className="hidden md:block">
-              <Link href="/api/auth/signout" className="inline-flex items-center gap-1.5 px-4 py-2 text-[10px] font-black uppercase tracking-wider text-[var(--color-muted)] hover:text-white bg-[var(--color-input)] hover:bg-red-500/80 rounded-xl transition-all border border-[var(--color-border)] hover:border-red-500/50 shadow-sm">
-                <LogOut className="w-3 h-3" /> Exit
-              </Link>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-primary)]/30 bg-[var(--color-secondary)] px-4 py-2 text-[10px] font-black uppercase tracking-wider text-white shadow-sm transition-colors hover:bg-[var(--color-primary)]"
+              >
+                <LogOut className="w-3 h-3" /> Log out
+              </button>
             </div>
 
             {/* Mobile Profile Avatar */}
@@ -296,19 +310,35 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
                   <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-input)]/30">
                     <p className="text-[10px] font-semibold text-[var(--color-muted)] flex items-center gap-1.5">
                       <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-primary)]" />
-                      Role: <span className="font-bold text-[var(--color-text)]">{isAuctioneer ? "Auctioneer" : "Bidder"}</span>
+                      Role: <span className="font-bold text-[var(--color-text)]">{isAdmin ? "Administrator" : isAuctioneer ? "Auctioneer" : "Bidder"}</span>
                     </p>
                   </div>
 
                   <div className="px-3 pt-2 pb-1">
-                    <Link 
-                      href="/api/auth/signout" 
-                      onClick={() => setIsProfileDropdownOpen(false)}
-                      className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-bold text-red-400 hover:text-white bg-red-500/10 hover:bg-red-500 rounded-xl transition-all border border-red-500/20 hover:border-red-500"
+                    {isAuctioneer && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab("settings");
+                          setIsProfileDropdownOpen(false);
+                        }}
+                        className="mb-2 flex w-full items-center gap-2 rounded-xl border border-[var(--color-border)] px-3 py-2.5 text-xs font-bold text-[var(--color-text)] transition-colors hover:bg-[var(--color-input)]"
+                      >
+                        <Settings className="h-3.5 w-3.5 shrink-0 text-[var(--color-primary)]" />
+                        <span>Account settings</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileDropdownOpen(false);
+                        void handleLogout();
+                      }}
+                      className="flex w-full items-center gap-2 rounded-xl border border-[var(--color-primary)]/30 bg-[var(--color-secondary)] px-3 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[var(--color-primary)]"
                     >
                       <LogOut className="w-3.5 h-3.5 shrink-0" />
-                      <span>Disconnect Session</span>
-                    </Link>
+                      <span>Log out</span>
+                    </button>
                   </div>
                 </div>
               )}
@@ -329,7 +359,17 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
             {/* Dashboard Overview */}
             {activeTab === "dashboard" && (
               <div className="space-y-6">
-                {isAuctioneer ? (
+                {isAdmin ? (
+                  <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-6">
+                    <h2 className="text-lg font-bold text-[var(--color-text)]">Administrator dashboard</h2>
+                    <p className="mt-2 text-sm text-[var(--color-muted)]">
+                      Register verified auctioneers and review pending bidder deposit refunds.
+                    </p>
+                    <button type="button" onClick={() => setActiveTab("auctioneers")} className="mt-4 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-bold text-white">
+                      Manage auctioneers and refunds
+                    </button>
+                  </div>
+                ) : isAuctioneer ? (
                   <div className="bg-[var(--color-card)] p-6 rounded-2xl border border-[var(--color-border)] shadow-sm space-y-4">
                     <div className="flex items-center justify-between">
                       <div>
@@ -381,7 +421,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
             )}
 
             {/* Manage Auctions (Auctioneer) / Live Auction Floor (Bidder) */}
-            {activeTab === "live-auctions" && (
+            {activeTab === "live-auctions" && !isAdmin && (
               isAuctioneer ? (
                 <AuctioneerLiveConsole 
                   auctionItems={serializedAuctionItems} 
@@ -393,17 +433,17 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
             )}
 
             {/* Daily Sales (Bidder) — regular sold commodities with search */}
-            {activeTab === "daily-sales" && !isAuctioneer && (
+            {activeTab === "daily-sales" && isBidder && (
               <BidderMarketplace initialTab="daily-sales" />
             )}
 
             {/* Properties (Bidder) — land & buildings searchable by location */}
-            {activeTab === "properties" && !isAuctioneer && (
+            {activeTab === "properties" && isBidder && (
               <BidderMarketplace initialTab="properties" />
             )}
 
             {/* My Bids (Bidder only) */}
-            {activeTab === "my-bids" && !isAuctioneer && (
+            {activeTab === "my-bids" && isBidder && (
               <Mybids/>
             )}
 
@@ -428,6 +468,10 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
               <AuctioneerFinance view="reports" />
             )}
 
+            {activeTab === "auctioneers" && isAdmin && (
+              <AdminAuctioneerManager />
+            )}
+
             {/* Settings */}
             {activeTab === "settings" && (
               <div className="bg-[var(--color-card)] p-6 rounded-2xl border border-[var(--color-border)] shadow-sm max-w-2xl">
@@ -442,6 +486,8 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
                 </div>
 
                 <div className="space-y-4">
+                  {isAuctioneer && <AuctioneerPasswordChange />}
+
                   <div className="flex items-center justify-between p-4 bg-[var(--color-input)] rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)]/30 transition-all">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-lg bg-[var(--color-secondary)]/20 flex items-center justify-center">
@@ -509,7 +555,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
           <span className="text-[10px] tracking-tight">Home</span>
         </button>
 
-        <button
+        {!isAdmin && <button
           onClick={() => setActiveTab("live-auctions")}
           className={`flex flex-col items-center justify-center flex-1 h-full py-2 transition-all relative ${
             activeTab === "live-auctions" ? "text-[var(--color-primary)] scale-105 font-bold" : "text-[var(--color-muted)] font-medium"
@@ -522,9 +568,16 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
           {liveCount > 0 && (
             <span className="absolute top-2.5 right-6 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
           )}
-        </button>
+        </button>}
 
-        {!isAuctioneer && (
+        {isAdmin && (
+          <button onClick={() => setActiveTab("auctioneers")} className={`flex flex-col items-center justify-center flex-1 h-full py-2 ${activeTab === "auctioneers" ? "text-[var(--color-primary)]" : "text-[var(--color-muted)]"}`}>
+            <User className="mb-0.5 h-5 w-5" />
+            <span className="text-[10px] tracking-tight">Admin</span>
+          </button>
+        )}
+
+        {isBidder && (
           <button
             onClick={() => setActiveTab("daily-sales")}
             className={`flex flex-col items-center justify-center flex-1 h-full py-2 transition-all ${
@@ -536,7 +589,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
           </button>
         )}
 
-        {!isAuctioneer && (
+        {isBidder && (
           <button
             onClick={() => setActiveTab("properties")}
             className={`flex flex-col items-center justify-center flex-1 h-full py-2 transition-all ${
@@ -560,7 +613,7 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
           </button>
         )}
 
-        {!isAuctioneer && (
+        {isBidder && (
           <button
             onClick={() => setActiveTab("my-bids")}
             className={`flex flex-col items-center justify-center flex-1 h-full py-2 transition-all ${

@@ -4,10 +4,11 @@
 import { AccessToken } from "livekit-server-sdk";
 import { auth } from "../../auth";
 import { db } from "@/lib/db";
-import { auctionItems, bids } from "@/lib/db/schema";
+import { auctionAccessPayments, auctionItems, auctionRefunds, auctionSettlements, bids } from "@/lib/db/schema";
 import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import Pusher from "pusher";
 import { hasClearedAuctionGate } from "@/app/actions/auctionAccess";
+import { settleAuction } from "@/lib/auctionSettlement";
 
 const pusher = new Pusher({
   appId: process.env.PUSHER_APP_ID || "",
@@ -242,6 +243,7 @@ export async function submitLiveBid(auctionItemId, amount) {
     const broadcastPayload = {
       id: placedBid.id,
       amount: Number(placedBid.amount),
+      bidderId: Number(placedBid.bidderId),
       bidderName: session.user.name || `Bidder #${session.user.id}`,
       createdAt: placedBid.createdAt.toISOString()
     };
@@ -251,6 +253,70 @@ export async function submitLiveBid(auctionItemId, amount) {
   } catch (error) {
     console.error("❌ Live Bid Processing Failure:", error);
     return { success: false, error: error.message || "An unexpected database operation exception was caught." };
+  }
+}
+
+export async function updateAuctionControls(auctionItemId, controls) {
+  try {
+    const session = await auth();
+    if (!session?.user?.id || !["AUCTIONEER", "ADMIN"].includes(session.user.role)) {
+      return { success: false, error: "Only the auctioneer or an administrator can change auction controls." };
+    }
+
+    const id = Number(auctionItemId);
+    if (!Number.isInteger(id) || id <= 0 || !controls || typeof controls !== "object") {
+      return { success: false, error: "Invalid auction control request." };
+    }
+
+    const item = await db.query.auctionItems.findFirst({
+      where: eq(auctionItems.id, id),
+      with: { asset: { columns: { createdById: true, listingType: true } } },
+    });
+    if (!item || item.asset?.listingType !== "AUCTION") {
+      return { success: false, error: "Auction item not found." };
+    }
+    if (session.user.role !== "ADMIN" && item.asset.createdById !== Number(session.user.id)) {
+      return { success: false, error: "You can only manage auctions that you created." };
+    }
+
+    let update;
+    if (typeof controls.reservePriceDisclosed === "boolean") {
+      update = { reservePriceDisclosed: controls.reservePriceDisclosed };
+    } else {
+      const seconds = Number(controls.extendSeconds);
+      if (![5, 10, 20].includes(seconds)) {
+        return { success: false, error: "Choose a valid 5, 10, or 20 second extension." };
+      }
+      if (!["ACTIVE", "LIVE"].includes(item.status) || item.endTime <= new Date()) {
+        return { success: false, error: "Only an active auction can be extended." };
+      }
+      update = { endTime: new Date(Math.max(item.endTime.getTime(), Date.now()) + seconds * 1000) };
+    }
+
+    const [updated] = await db.update(auctionItems).set(update).where(eq(auctionItems.id, id)).returning({
+      id: auctionItems.id,
+      status: auctionItems.status,
+      endTime: auctionItems.endTime,
+      reservePriceDisclosed: auctionItems.reservePriceDisclosed,
+    });
+    let notificationError = null;
+    try {
+      await pusher.trigger(`auction-room-${id}`, "auction-control-updated", {
+        endTime: updated.endTime.toISOString(),
+        reservePriceDisclosed: updated.reservePriceDisclosed,
+      });
+    } catch (error) {
+      console.error("[Auction controls broadcast]", error);
+      notificationError = "The control change was saved, but live bidders may need to refresh.";
+    }
+    return {
+      success: true,
+      data: { ...updated, endTime: updated.endTime.toISOString() },
+      ...(notificationError ? { notificationError } : {}),
+    };
+  } catch (error) {
+    console.error("[Auction controls]", error);
+    return { success: false, error: error.message || "Could not update auction controls." };
   }
 }
 
@@ -313,6 +379,31 @@ export async function getAuctionItemDetails(auctionItemId) {
     }));
 
     const highestBid = item.bids[0] ? Number(item.bids[0].amount) : Number(item.startingBid);
+    const [depositPayment] = await db.select({
+      amount: auctionAccessPayments.amount,
+      status: auctionAccessPayments.status,
+    }).from(auctionAccessPayments).where(and(
+      eq(auctionAccessPayments.userId, Number(session.user.id)),
+      eq(auctionAccessPayments.auctionItemId, cleanId),
+      eq(auctionAccessPayments.feeType, "BIDDING_DEPOSIT"),
+    )).limit(1);
+    const [refund] = await db.select({
+      amount: auctionRefunds.amount,
+      status: auctionRefunds.status,
+    }).from(auctionRefunds).where(and(
+      eq(auctionRefunds.userId, Number(session.user.id)),
+      eq(auctionRefunds.auctionItemId, cleanId),
+    )).limit(1);
+    const [settlement] = await db.select({ winnerId: auctionSettlements.winnerId })
+      .from(auctionSettlements).where(eq(auctionSettlements.auctionItemId, cleanId)).limit(1);
+    const ownHighestBid = item.bids.find((bid) => bid.bidderId === Number(session.user.id));
+    const bidderDeposit = depositPayment?.status === "PAID" ? Number(depositPayment.amount) : 0;
+    const isCurrentLeader = item.bids[0]?.bidderId === Number(session.user.id);
+    const committedBid = settlement?.winnerId === Number(session.user.id) ||
+      (!settlement && isCurrentLeader)
+      ? Number(ownHighestBid?.amount || 0)
+      : 0;
+    const canSeeReservePrice = session.user.role === "ADMIN" || isOwner || item.reservePriceDisclosed;
 
     return {
       success: true,
@@ -320,14 +411,19 @@ export async function getAuctionItemDetails(auctionItemId) {
         id: item.id,
         status: item.status,
         startingBid: Number(item.startingBid),
-        reservePrice: Number(item.reservePrice),
+        reservePrice: canSeeReservePrice ? Number(item.reservePrice) : null,
+        reservePriceDisclosed: item.reservePriceDisclosed,
         depositAmount: Number(item.depositAmount),
-        maximumBid: Number(item.biddingFee),
+        maximumBid: bidderDeposit,
+        bidderBalance: refund
+          ? Number(refund.amount)
+          : Math.max(0, bidderDeposit - committedBid),
+        refundStatus: refund?.status || null,
         startTime: item.startTime.toISOString(),
         endTime: item.endTime.toISOString(),
         liveRoomId: item.liveRoomId,
         currentHighestBid: highestBid,
-        participantCount: item.registrations.length + Math.floor(Math.random() * 5) + 3, // Base + variance
+        participantCount: item.registrations.length,
         asset: {
           id: item.asset.id,
           title: item.asset.title,
@@ -492,12 +588,22 @@ export async function closeLiveAuctionDirectly(itemId) {
       return { success: false, error: "You can only close auctions that you created." };
     }
 
-    const [record] = await db.update(auctionItems).set({ status: "CLOSED" })
-      .where(eq(auctionItems.id, cleanId)).returning();
-
+    const settlement = await settleAuction(cleanId);
+    const [record] = await db.select().from(auctionItems).where(eq(auctionItems.id, cleanId)).limit(1);
     if (!record) return { success: false, error: "Auction item not found." };
-
-    return { success: true, data: JSON.parse(JSON.stringify(record)) };
+    let closeNotificationError = null;
+    try {
+      await pusher.trigger(`auction-room-${cleanId}`, "auction-closed", { auctionItemId: cleanId });
+    } catch (error) {
+      console.error("[Auction close broadcast]", error);
+      closeNotificationError = "Live bidders may need to refresh to see the closed status.";
+    }
+    return {
+      success: true,
+      data: JSON.parse(JSON.stringify(record)),
+      settlement,
+      ...(closeNotificationError ? { closeNotificationError } : {}),
+    };
   } catch (err) {
     console.error("❌ Status close failure:", err);
     return { success: false, error: err.message };

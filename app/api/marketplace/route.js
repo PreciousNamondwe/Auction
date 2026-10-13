@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { assets, bids, dailySales } from "@/lib/db/schema";
-import { and, desc, eq, ilike, inArray, or } from "drizzle-orm";
+import { assets, auctionItems, bids, dailySales } from "@/lib/db/schema";
+import { and, desc, eq, gt, ilike, inArray, or } from "drizzle-orm";
 
 /**
  * GET /api/marketplace?tab=daily-sales|properties&q=search+term
@@ -15,15 +14,30 @@ import { and, desc, eq, ilike, inArray, or } from "drizzle-orm";
  */
 export async function GET(request) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized. Please sign in." }, { status: 401 });
-    }
-
     const { searchParams } = new URL(request.url);
-    const tab = searchParams.get("tab") === "properties" ? "properties" : "daily-sales";
+    const requestedTab = searchParams.get("tab");
+    const tab = ["properties", "auctions"].includes(requestedTab) ? requestedTab : "daily-sales";
     const q = (searchParams.get("q") || "").trim();
     const locationFilter = (searchParams.get("location") || "").trim();
+    const categoryFilter = (searchParams.get("category") || "").trim();
+    const auctioneerFilter = (searchParams.get("auctioneer") || "").trim();
+    const listingTypeFilter = (searchParams.get("listingType") || "").trim().toUpperCase();
+    const minPrice = searchParams.has("minPrice") ? Number(searchParams.get("minPrice")) : null;
+    const maxPrice = searchParams.has("maxPrice") ? Number(searchParams.get("maxPrice")) : null;
+    if (
+      (minPrice !== null && (!Number.isFinite(minPrice) || minPrice < 0)) ||
+      (maxPrice !== null && (!Number.isFinite(maxPrice) || maxPrice < 0)) ||
+      (minPrice !== null && maxPrice !== null && minPrice > maxPrice)
+    ) {
+      return NextResponse.json({ error: "Price filters must be non-negative numbers, with minimum no greater than maximum." }, { status: 400 });
+    }
+    const matchesFilters = (item, price) =>
+      (!categoryFilter || item.category?.toLowerCase() === categoryFilter.toLowerCase()) &&
+      (!auctioneerFilter || String(item.auctioneerId) === auctioneerFilter) &&
+      (!locationFilter || item.location?.toLowerCase().includes(locationFilter.toLowerCase())) &&
+      (price !== null && price !== undefined || minPrice === null && maxPrice === null) &&
+      (minPrice === null || Number(price) >= minPrice) &&
+      (maxPrice === null || Number(price) <= maxPrice);
 
     const searchFilter = q ? or(
       ilike(assets.title, `%${q}%`),
@@ -33,6 +47,52 @@ export async function GET(request) {
     ) : undefined;
 
     // ── DAILY SALES: regular sold commodities (goods) across all auctioneers ──
+    if (tab === "auctions") {
+      const auctionRows = await db.query.auctionItems.findMany({
+        where: and(
+          inArray(auctionItems.status, ["UPCOMING", "ACTIVE", "LIVE"]),
+          gt(auctionItems.endTime, new Date()),
+        ),
+        with: {
+          asset: { with: { createdBy: { columns: { id: true, name: true } } } },
+          images: { where: (image, { eq }) => eq(image.isPrimary, true), limit: 1 },
+          bids: { orderBy: [desc(bids.amount)], limit: 1 },
+        },
+        orderBy: [desc(auctionItems.startTime)],
+      });
+      const available = auctionRows.filter((item) => item.asset?.listingType === "AUCTION");
+      const items = available.map((item) => ({
+        id: item.id,
+        assetId: item.asset.id,
+        title: item.asset.title,
+        description: item.asset.description,
+        category: item.asset.category,
+        location: item.asset.location,
+        startingBid: Number(item.startingBid),
+        currentBid: item.bids[0] ? Number(item.bids[0].amount) : null,
+        startTime: item.startTime.toISOString(),
+        endTime: item.endTime.toISOString(),
+        status: item.status,
+        imageUrl: item.images[0]?.url || null,
+        auctioneerName: item.asset.createdBy?.name || "Verified Auctioneer",
+        auctioneerId: item.asset.createdBy?.id || null,
+        createdAt: item.createdAt.toISOString(),
+        kind: "AUCTION",
+      })).filter((item) =>
+        (!searchFilter || [item.title, item.description, item.category, item.location].join(" ").toLowerCase().includes(q.toLowerCase())) &&
+        matchesFilters(item, item.currentBid ?? item.startingBid)
+      );
+      return NextResponse.json({
+        success: true,
+        tab,
+        count: items.length,
+        categories: [...new Set(available.map((item) => item.asset.category).filter(Boolean))].sort(),
+        auctioneers: [...new Map(available.map((item) => [item.asset.createdBy?.id, item.asset.createdBy?.name]).filter(([id, name]) => id && name)).entries()]
+          .map(([id, name]) => ({ id, name })),
+        items,
+      });
+    }
+
     if (tab === "daily-sales") {
       const dailySaleRows = await db.query.dailySales.findMany({
         where: eq(dailySales.isAvailable, true),
@@ -76,12 +136,22 @@ export async function GET(request) {
             imageUrl: primaryImage,
             auctioneerName: sale.asset.createdBy?.name || "Verified Auctioneer",
             auctioneerId: sale.asset.createdBy?.id || null,
+            location: sale.asset.location,
             createdAt: sale.createdAt.toISOString(),
             kind: "DAILY_SALE",
           };
-        });
+        })
+        .filter((item) => matchesFilters(item, item.price));
 
-      return NextResponse.json({ success: true, tab, count: items.length, items });
+      return NextResponse.json({
+        success: true,
+        tab,
+        count: items.length,
+        categories: [...new Set(dailySaleRows.map((sale) => sale.asset?.category).filter(Boolean))].sort(),
+        auctioneers: [...new Map(dailySaleRows.filter((sale) => sale.asset?.createdBy).map((sale) => [sale.asset.createdBy.id, sale.asset.createdBy.name])).entries()]
+          .map(([id, name]) => ({ id, name })),
+        items,
+      });
     }
 
     // ── PROPERTIES: sale and lease listings; auctions are shown on the auction floor ──
@@ -131,12 +201,24 @@ export async function GET(request) {
         attributes: asset.attributes || {},
         auctioneerName: asset.createdBy?.name || "Verified Auctioneer",
         auctioneerId: asset.createdBy?.id || null,
+        location: asset.location,
         createdAt: asset.createdAt.toISOString(),
         kind: "PROPERTY",
       };
-    });
+    }).filter((item) =>
+      (!listingTypeFilter || item.listingType === listingTypeFilter) &&
+      matchesFilters(item, item.listingType === "LEASE" ? item.monthlyRent : item.askingPrice)
+    );
 
-    return NextResponse.json({ success: true, tab, count: items.length, items });
+    return NextResponse.json({
+      success: true,
+      tab,
+      count: items.length,
+      categories: [...new Set(properties.map((asset) => asset.category).filter(Boolean))].sort(),
+      auctioneers: [...new Map(properties.filter((asset) => asset.createdBy).map((asset) => [asset.createdBy.id, asset.createdBy.name])).entries()]
+        .map(([id, name]) => ({ id, name })),
+      items,
+    });
   } catch (error) {
     console.error("[Marketplace API]", error);
     return NextResponse.json(

@@ -37,6 +37,7 @@ export default async function DashboardPage() {
       id: Number(item.id),
       assetId: Number(item.assetId),
       reservePrice: item.reservePrice ? Number(item.reservePrice) : 0,
+      reservePriceDisclosed: Boolean(item.reservePriceDisclosed),
       startingBid: item.startingBid ? Number(item.startingBid) : 0,
       depositAmount: item.depositAmount ? Number(item.depositAmount) : 0,
       status: item.status || "UPCOMING",

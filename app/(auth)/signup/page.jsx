@@ -1,13 +1,12 @@
 "use client";
 
 import React, { useState } from "react";
-import { Mail, Lock, User, Phone, Building2, Gavel } from "lucide-react";
+import { Mail, Lock, User, Phone, Gavel } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { signIn } from "next-auth/react";
 
 export default function SignUpPage() {
-  const [role, setRole] = useState("BIDDER");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [formData, setFormData] = useState({
@@ -31,11 +30,14 @@ export default function SignUpPage() {
       const response = await fetch("/api/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...formData, role })
+        body: JSON.stringify(formData)
       });
 
       if (response.ok) {
-        window.location.href = "/login";
+        const callbackUrl = new URLSearchParams(window.location.search).get("callbackUrl");
+        window.location.href = callbackUrl
+          ? `/login?callbackUrl=${encodeURIComponent(callbackUrl)}`
+          : "/login";
       } else {
         const err = await response.json();
         setError(err.message || "Registration failed");
@@ -43,6 +45,21 @@ export default function SignUpPage() {
     } catch (error) {
       setError("Connection error. Please try again.");
     } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleSignUp = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      const callbackUrl = new URLSearchParams(window.location.search).get("callbackUrl");
+      const redirectTo = callbackUrl?.startsWith("/") && !callbackUrl.startsWith("//")
+        ? callbackUrl
+        : "/";
+      await signIn("google", { redirectTo });
+    } catch {
+      setError("Google sign-in could not be started. Please try again.");
       setLoading(false);
     }
   };
@@ -74,32 +91,9 @@ export default function SignUpPage() {
           </div>
         )}
 
-        {/* Role Selection Toggle */}
-        <div className="grid grid-cols-2 gap-2 sm:gap-3 mb-6 p-1 bg-[var(--color-input)] rounded-xl border border-[var(--color-border)]">
-          <button
-            type="button"
-            onClick={() => setRole("BIDDER")}
-            className={`flex items-center justify-center gap-2 py-2.5 text-xs sm:text-sm font-semibold rounded-lg transition-all duration-300 ${
-              role === "BIDDER"
-                ? "bg-[var(--color-secondary)] text-white shadow-sm"
-                : "text-[var(--color-muted)] hover:text-[var(--color-text)]"
-            }`}
-          >
-            <Gavel className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            I am a Bidder
-          </button>
-          <button
-            type="button"
-            onClick={() => setRole("AUCTIONEER")}
-            className={`flex items-center justify-center gap-2 py-2.5 text-xs sm:text-sm font-semibold rounded-lg transition-all duration-300 ${
-              role === "AUCTIONEER"
-                ? "bg-[var(--color-secondary)] text-white shadow-sm"
-                : "text-[var(--color-muted)] hover:text-[var(--color-text)]"
-            }`}
-          >
-            <Building2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            Auctioneer
-          </button>
+        <div className="mb-5 flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2.5 text-xs text-[var(--color-muted)]">
+          <Gavel className="h-4 w-4 text-[var(--color-primary)]" />
+          Public registration is for bidders. Auctioneer accounts are created by an administrator after verification.
         </div>
 
         {/* Input Form */}
@@ -185,7 +179,7 @@ export default function SignUpPage() {
             disabled={loading}
             className="w-full bg-[var(--color-secondary)] hover:bg-[var(--color-primary)] disabled:opacity-50 text-white font-semibold text-sm rounded-xl py-3 shadow-lg shadow-[var(--color-primary)]/20 transition-all duration-300 mt-2 hover:-translate-y-0.5 active:translate-y-0"
           >
-            {loading ? "Creating Account..." : `Create ${role === "BIDDER" ? "Bidder" : "Auctioneer"} Account`}
+            {loading ? "Creating Account..." : "Create Bidder Account"}
           </button>
         </form>
 
@@ -202,8 +196,9 @@ export default function SignUpPage() {
         {/* Google Auth */}
         <button 
           type="button" 
-          onClick={() => signIn("google", { callbackUrl: "/" })}
-          className="w-full flex items-center justify-center gap-3 border border-[var(--color-border)] hover:bg-[var(--color-input)] text-[var(--color-text)] font-semibold text-sm rounded-xl py-2.5 transition-all duration-300"
+          onClick={handleGoogleSignUp}
+          disabled={loading}
+          className="w-full flex items-center justify-center gap-3 border border-[var(--color-border)] hover:bg-[var(--color-input)] text-[var(--color-text)] font-semibold text-sm rounded-xl py-2.5 transition-all duration-300 disabled:cursor-wait disabled:opacity-60"
         >
           <Image 
             src="/google.svg" 
@@ -212,7 +207,7 @@ export default function SignUpPage() {
             height={18} 
             priority
           />
-          Continue with Google
+          {loading ? "Connecting to Google..." : "Continue with Google"}
         </button>
 
         <p className="text-center text-sm text-[var(--color-muted)] mt-6">
