@@ -1,7 +1,10 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import Link from "next/link";
+import { signOut } from "next-auth/react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useTheme } from "@/app/providers";
+import { confirmAuctionAccessPayment, hasClearedAuctionGate } from "@/app/actions/auctionAccess";
 import { 
   LogOut, 
   Gavel,
@@ -12,7 +15,14 @@ import {
   ChevronLeft,
   ChevronRight,
   User,
-  ShieldCheck
+  ShieldCheck,
+  BarChart3,
+  Settings,
+  Sun,
+  Moon,
+  ShoppingBag,
+  Home,
+  Users,
 } from "lucide-react";
 
 // Component Registry Imports
@@ -20,26 +30,47 @@ import BidderDashboard from "@/components/dashboard/BidderDashboard";
 import AuctioneerLiveConsole from "@/components/dashboard/AuctioneerLiveConsole";
 import BidderLiveConsole from "@/components/dashboard/BidderLiveConsole";
 import AuctioneerManageAssets from "@/components/dashboard/AuctioneerManageAssets";
+import AuctioneerAddListing from "@/components/dashboard/AuctioneerAddListing";
+import BidderMarketplace from "@/components/dashboard/BidderMarketplace";
+import PaymentHistory from "@/components/dashboard/PaymentHistory";
+import AuctioneerFinance from "@/components/dashboard/AuctioneerFinance";
+import Mybids from "./Mybids"
+import AdminAuctioneerManager from "@/components/dashboard/AdminAuctioneerManager";
+import AuctioneerPasswordChange from "@/components/dashboard/AuctioneerPasswordChange";
+import AdminUserManager from "@/components/dashboard/AdminUserManager";
 
-export default function DashboardLayoutFrame({ user, serializedAuctionItems, isAuctioneer }) {
+export default function DashboardLayoutFrame({ user, serializedAuctionItems, isAuctioneer, dashboardStats = null, forceTab = null, addListingInitialMode = "property" }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [activeTab, setActiveTab] = useState("live-console"); // Defaults to real-time interactions console
+  const [activeTab, setActiveTab] = useState(forceTab || searchParams.get("tab") || (user?.role === "ADMIN" ? "dashboard" : "live-auctions"));
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
-  const [liveCount, setLiveCount] = useState(0);
-  
-  const dropdownRef = useRef(null);
+  const [accessPaymentMessage, setAccessPaymentMessage] = useState("");
+  const { theme, toggleTheme } = useTheme();
+  const isAdmin = user?.role === "ADMIN";
+  const isBidder = user?.role === "BIDDER";
 
-  // Hook into incoming items list to continuously manage the floating tab badge indicators 
-  useEffect(() => {
-    if (serializedAuctionItems) {
-      const activeRooms = serializedAuctionItems.filter(
-        item => item.status === "LIVE" || item.status === "ACTIVE"
-      );
-      setLiveCount(activeRooms.length);
-    }
+  const handleLogout = async () => {
+    await signOut({ redirect: false });
+    window.location.replace(window.location.origin);
+  };
+
+  const dropdownRef = useRef(null);
+  const handledPaymentReturn = useRef("");
+  const returnedPaymentRef = searchParams.get("access_payment_ref");
+  const returnedAuctionId = searchParams.get("access_auction_id");
+  const returnedFeeType = searchParams.get("access_fee_type");
+  const returnedRoomId = searchParams.get("access_room_id");
+
+  // Derive live count from serializedAuctionItems to avoid synchronous setState in effects.
+  // Keep a state fallback for compatibility, but prefer memoized derived value.
+  const liveCount = React.useMemo(() => {
+    if (!serializedAuctionItems) return 0;
+    return serializedAuctionItems.filter(
+      (item) => item.status === "LIVE" || item.status === "ACTIVE"
+    ).length;
   }, [serializedAuctionItems]);
 
-  // Close the mobile profile dropdown menu automatically if user clicks on outside workspace area
   useEffect(() => {
     function handleOutsideClick(event) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -50,28 +81,111 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, []);
 
+  useEffect(() => {
+    if (
+      !returnedPaymentRef ||
+      !returnedAuctionId ||
+      !["ENTRY_FEE", "BIDDING_DEPOSIT", "BIDDING_FEE", "SECURITY_DEPOSIT"].includes(returnedFeeType) ||
+      !["BIDDER", "AUCTIONEER"].includes(user?.role)
+    ) return;
+
+    const returnKey = `${returnedPaymentRef}:${returnedAuctionId}:${returnedFeeType}`;
+    if (handledPaymentReturn.current === returnKey) return;
+    handledPaymentReturn.current = returnKey;
+    let isCurrent = true;
+
+    async function verifyReturnedPayment() {
+      try {
+        const result = await confirmAuctionAccessPayment(returnedAuctionId, returnedFeeType, returnedPaymentRef);
+        if (!isCurrent) return;
+        if (!result.success) {
+          setAccessPaymentMessage(`Payment verification failed: ${result.error}`);
+        } else if (result.data?.status === "PAID") {
+          const access = await hasClearedAuctionGate(returnedAuctionId);
+          if (access.success && access.cleared && returnedRoomId) {
+            router.replace(`/auctions/live/${encodeURIComponent(returnedRoomId)}?id=${encodeURIComponent(returnedAuctionId)}`);
+            return;
+          }
+          setAccessPaymentMessage(
+            access.success && !access.cleared
+              ? "Payment confirmed. Complete any remaining access payment to enter the auction."
+              : "Payment confirmed. You can now join the live auction."
+          );
+        } else if (result.data?.status === "FAILED") {
+          setAccessPaymentMessage("PayChangu reported that the payment failed. Please try again.");
+        } else {
+          setAccessPaymentMessage("Payment is still processing. Rejoin the auction to check again.");
+        }
+      } catch (error) {
+        if (isCurrent) {
+          console.error("[Auction access return]", error);
+          setAccessPaymentMessage("Could not verify the payment. Rejoin the auction to check again.");
+        }
+      } finally {
+        if (isCurrent) router.replace("/dashboard?tab=live-auctions");
+      }
+    }
+    verifyReturnedPayment();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [returnedPaymentRef, returnedAuctionId, returnedFeeType, returnedRoomId, user?.role, router]);
+
   const userInitials = user?.name ? user.name.substring(0, 2).toUpperCase() : "OP";
 
+  const getTabLabel = (tab) => {
+    const labels = {
+      "dashboard": "Dashboard",
+      "live-auctions": isAuctioneer ? "Auctions" : "Live Auction Floor",
+      "daily-sales": "Daily Sales",
+      "properties": "Properties",
+      "my-bids": "My Bids",
+      "manage-listings": "Manage Listings",
+      "add-listing": "Add Listing",
+      "payments": isAuctioneer ? "Payments Received" : "Receipts",
+      "reports": "Reports",
+      "auctioneers": "Auctioneer Administration",
+      "users": "User Management",
+      "settings": "Settings"
+    };
+    return labels[tab] || tab;
+  };
+
+  const navItems = [
+    { id: "dashboard", icon: LayoutDashboard, label: "Dashboard", show: true },
+    { id: "live-auctions", icon: Tv, label: isAuctioneer ? "Auctions" : "Live Auction Floor", show: !isAdmin, badge: liveCount },
+    { id: "daily-sales", icon: ShoppingBag, label: "Daily Sales", show: isBidder },
+    { id: "properties", icon: Home, label: "Properties", show: isBidder },
+    { id: "my-bids", icon: Gavel, label: "My Bids", show: isBidder },
+    { id: "manage-listings", icon: FolderGit, label: "Manage Listings", show: isAuctioneer },
+    { id: "auctioneers", icon: User, label: "Auctioneers", show: isAdmin },
+    { id: "users", icon: Users, label: "User Management", show: isAdmin },
+    { id: "payments", icon: Wallet, label: isAuctioneer ? "Payments Received" : "Receipts", show: true },
+    { id: "reports", icon: BarChart3, label: "Reports", show: isAuctioneer },
+    { id: "settings", icon: Settings, label: "Settings", show: true },
+  ];
+
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-50 text-slate-900 font-sans fixed inset-0 flex-col md:flex-row">
-      
+    <div className="flex h-screen w-screen overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)] font-sans fixed inset-0 flex-col md:flex-row">
+
       {/* ========================================================
-          DESKTOP SIDEBAR NAVIGATION (Hidden on Mobile screens)
+          DESKTOP SIDEBAR NAVIGATION
          ======================================================== */}
       <aside 
-        className={`hidden md:flex flex-col h-full bg-white border-r border-slate-200 transition-all duration-300 ease-in-out relative shrink-0 z-50 ${
+        className={`hidden md:flex flex-col h-full bg-[var(--color-card)] border-r border-[var(--color-border)] transition-all duration-300 ease-in-out relative shrink-0 z-50 ${
           isCollapsed ? "w-16" : "w-64"
         }`}
       >
         {/* Sidebar Brand Header */}
-        <div className="h-16 flex items-center gap-3 px-4 border-b border-slate-100 overflow-hidden shrink-0">
-          <div className="flex aspect-square h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-sm shadow-indigo-600/20">
+        <div className="h-16 flex items-center gap-3 px-4 border-b border-[var(--color-border)] overflow-hidden shrink-0">
+          <div className="flex aspect-square h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[var(--color-secondary)] to-[var(--color-primary)] text-white shadow-sm shadow-[var(--color-primary)]/20">
             <Gavel className="w-4 h-4" />
           </div>
           {!isCollapsed && (
             <div className="flex flex-col gap-0.5 leading-none">
-              <span className="font-bold text-xs uppercase tracking-tight text-slate-900">Trust Terminal</span>
-              <span className="text-[10px] text-slate-400 font-semibold">Operations v2.0</span>
+              <span className="font-bold text-xs uppercase tracking-tight text-[var(--color-text)]">TrustBid</span>
+              <span className="text-[10px] text-[var(--color-muted)] font-semibold">Auction Platform</span>
             </div>
           )}
         </div>
@@ -79,153 +193,149 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
         {/* Desktop Navigation Links */}
         <div className="flex-1 overflow-y-auto px-3 py-6">
           <nav className="space-y-1">
-            <button
-              onClick={() => setActiveTab("dashboard")}
-              className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-lg transition-colors ${
-                activeTab === "dashboard" ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              }`}
-            >
-              <LayoutDashboard className="w-4 h-4 shrink-0" />
-              {!isCollapsed && <span className="truncate">Dashboard Overview</span>}
-            </button>
-
-            <button
-              onClick={() => setActiveTab("live-console")}
-              className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-lg transition-colors relative ${
-                activeTab === "live-console" ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              }`}
-            >
-              <Tv className="w-4 h-4 shrink-0" />
-              {!isCollapsed && (
-                <span className="truncate">
-                  {isAuctioneer ? "Live Controller Console" : "Live Streaming Floor"}
-                </span>
-              )}
-              {!isCollapsed && liveCount > 0 && (
-                <span className="absolute right-3 bg-red-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">
-                  {liveCount}
-                </span>
-              )}
-            </button>
-
-            {isAuctioneer && (
+            {navItems.filter(item => item.show).map((item) => (
               <button
-                onClick={() => setActiveTab("manage-assets")}
-                className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-lg transition-colors ${
-                  activeTab === "manage-assets" ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 text-xs font-semibold rounded-xl transition-all duration-300 relative group ${
+                  activeTab === item.id 
+                    ? "bg-[var(--color-secondary)]/20 text-[var(--color-primary)] border border-[var(--color-primary)]/20" 
+                    : "text-[var(--color-muted)] hover:bg-[var(--color-input)] hover:text-[var(--color-text)]"
                 }`}
               >
-                <FolderGit className="w-4 h-4 shrink-0" />
-                {!isCollapsed && <span className="truncate">Manage Assets Registry</span>}
+                <item.icon className={`w-4 h-4 shrink-0 transition-colors ${activeTab === item.id ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] group-hover:text-[var(--color-text)]"}`} />
+                {!isCollapsed && <span className="truncate">{item.label}</span>}
+                {!isCollapsed && item.badge > 0 && (
+                  <span className="absolute right-3 bg-red-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold animate-pulse">
+                    {item.badge}
+                  </span>
+                )}
               </button>
-            )}
-
-            <button
-              onClick={() => setActiveTab("payments")}
-              className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-lg transition-colors ${
-                activeTab === "payments" ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              }`}
-            >
-              <Wallet className="w-4 h-4 shrink-0" />
-              {!isCollapsed && <span className="truncate">Payments Ledger</span>}
-            </button>
+            ))}
           </nav>
         </div>
 
-        {/* Sidebar Fixed Base Operator profile Badge */}
-        <div className="p-3 border-t border-slate-100 bg-slate-50/50 shrink-0">
-          <div className="flex items-center gap-2 rounded-xl bg-slate-100 p-1.5 overflow-hidden">
-            <div className="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-xs shrink-0">
+        {/* Sidebar Profile Badge */}
+        <div className="p-3 border-t border-[var(--color-border)] bg-[var(--color-input)]/30 shrink-0">
+          <div className="flex items-center gap-2 rounded-xl bg-[var(--color-input)] p-1.5 overflow-hidden border border-[var(--color-border)] hover:border-[var(--color-primary)]/30 transition-colors cursor-pointer">
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[var(--color-secondary)] to-[var(--color-primary)] text-[var(--color-bg)] flex items-center justify-center font-black text-xs shrink-0">
               {userInitials}
             </div>
             {!isCollapsed && (
               <div className="flex flex-col text-left overflow-hidden">
-                <span className="text-[11px] font-bold text-slate-800 truncate">{user?.name || "Operator"}</span>
-                <span className="text-[9px] text-slate-400 truncate max-w-[120px]">{user?.email}</span>
+                <span className="text-[11px] font-bold text-[var(--color-text)] truncate">{user?.name || "User"}</span>
+                <span className="text-[9px] text-[var(--color-muted)] truncate max-w-[120px]">{user?.email}</span>
               </div>
             )}
           </div>
         </div>
 
-        {/* Collapse Handle Toggle Button */}
+        {/* Collapse Toggle */}
         <button 
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className="absolute -right-3 top-20 bg-white border border-slate-200 rounded-full p-1 text-slate-500 hover:text-slate-900 shadow-sm hidden md:block z-50 hover:bg-slate-50"
+          className="absolute -right-3 top-20 bg-[var(--color-card)] border border-[var(--color-border)] rounded-full p-1.5 text-[var(--color-muted)] hover:text-[var(--color-primary)] shadow-lg hidden md:block z-50 hover:bg-[var(--color-input)] transition-all duration-300 hover:scale-110"
         >
           {isCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
         </button>
       </aside>
 
       {/* ========================================================
-          MAIN SYSTEM VIEWPORT CORE ENGINE
+          MAIN VIEWPORT
          ======================================================== */}
       <div className="flex flex-col flex-1 min-w-0 h-full overflow-hidden mb-16 md:mb-0">
-        
-        {/* GLOBAL SCREEN TOP APP BAR */}
-        <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 md:px-6 relative z-40">
-          <div className="flex items-center gap-2">
-            <div className="md:hidden flex aspect-square h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-sm">
+
+        {/* TOP APP BAR */}
+        <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-[var(--color-border)] bg-[var(--color-card)] px-4 md:px-6 relative z-40">
+          <div className="flex items-center gap-3 flex-1">
+            <div className="md:hidden flex aspect-square h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-[var(--color-secondary)] to-[var(--color-primary)] text-white shadow-sm">
               <Gavel className="w-4 h-4" />
             </div>
-            <div>
-              <h1 className="text-xs md:text-sm font-bold text-slate-900 tracking-tight">Trust Terminal Platform</h1>
-              <p className="text-[9px] md:text-[10px] text-slate-500 font-semibold">Operations Center Desk</p>
-            </div>
+
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Desktop Dynamic Page View Tag Badge */}
-            <span className="hidden md:inline-flex items-center text-[10px] bg-slate-100 font-bold px-2.5 py-1 rounded-md border border-slate-200 text-slate-600 uppercase tracking-wider">
-              {activeTab.replace("-", " ")}
+            {/* Active Tab Badge */}
+            <span className="hidden md:inline-flex items-center text-[10px] bg-[var(--color-input)] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-primary)] uppercase tracking-wider">
+              {getTabLabel(activeTab)}
             </span>
 
-            {/* PERMANENT DESKTOP VIEW ACTION LOGOUT */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+              title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+              className="w-9 h-9 rounded-xl bg-[var(--color-input)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]/30 transition-all duration-300"
+            >
+              {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
+
+            {/* Desktop Logout */}
             <div className="hidden md:block">
-              <Link href="/api/auth/signout" className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:text-white bg-slate-100 hover:bg-red-600 rounded-lg transition-all border border-slate-200 shadow-sm">
-                <LogOut className="w-3 h-3" /> Log Out
-              </Link>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-primary)]/30 bg-[var(--color-secondary)] px-4 py-2 text-[10px] font-black uppercase tracking-wider text-white shadow-sm transition-colors hover:bg-[var(--color-primary)]"
+              >
+                <LogOut className="w-3 h-3" /> Log out
+              </button>
             </div>
 
-            {/* 🔴 MOBILE INTERACTIVE PROFILE AVATAR TRIGGER CIRCLE */}
+            {/* Mobile Profile Avatar */}
             <div className="block md:hidden relative" ref={dropdownRef}>
               <button
                 onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
-                className={`w-9 h-9 rounded-full font-black text-xs flex items-center justify-center border transition-all active:scale-95 focus:outline-none ${
+                className={`w-9 h-9 rounded-full font-black text-xs flex items-center justify-center border-2 transition-all active:scale-95 focus:outline-none ${
                   isProfileDropdownOpen 
-                    ? "bg-indigo-600 border-indigo-700 text-white ring-4 ring-indigo-100" 
-                    : "bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700"
+                    ? "bg-gradient-to-br from-[var(--color-secondary)] to-[var(--color-primary)] border-[var(--color-primary)] text-[var(--color-bg)] ring-4 ring-[var(--color-primary)]/20" 
+                    : "bg-[var(--color-input)] hover:bg-[var(--color-border)] border-[var(--color-border)] text-[var(--color-text)]"
                 }`}
               >
                 {userInitials}
               </button>
 
-              {/* 🔽 RESPONSIVE APP DROPDOWN OVERLAY PORTAL */}
+              {/* Mobile Dropdown */}
               {isProfileDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-56 bg-white border border-slate-200 rounded-xl shadow-2xl py-2 z-[100] transform origin-top-right animate-in fade-in slide-in-from-top-2 duration-150">
-                  <div className="px-3.5 py-2 border-b border-slate-100">
-                    <p className="text-[11px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                <div className="absolute right-0 mt-3 w-64 bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl shadow-black/20 py-3 z-[100] transform origin-top-right">
+                  <div className="px-4 py-3 border-b border-[var(--color-border)]">
+                    <p className="text-[11px] font-black uppercase tracking-wider text-[var(--color-muted)] flex items-center gap-1.5 mb-2">
                       <User className="w-3 h-3" /> Profile Info
                     </p>
-                    <p className="text-xs font-bold text-slate-800 truncate mt-1">{user?.name || "System Operator"}</p>
-                    <p className="text-[10px] text-slate-500 truncate">{user?.email || "No email assigned"}</p>
+                    <p className="text-sm font-bold text-[var(--color-text)] truncate">{user?.name || "User"}</p>
+                    <p className="text-[10px] text-[var(--color-muted)] truncate">{user?.email || "No email"}</p>
                   </div>
-                  
-                  <div className="px-3.5 py-2 border-b border-slate-100 bg-slate-50/50">
-                    <p className="text-[10px] font-semibold text-slate-600 flex items-center gap-1.5">
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-                      Clearance: <span className="font-bold text-slate-900">{isAuctioneer ? "Auctioneer (Admin)" : "Verified Bidder"}</span>
+
+                  <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-input)]/30">
+                    <p className="text-[10px] font-semibold text-[var(--color-muted)] flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-primary)]" />
+                      Role: <span className="font-bold text-[var(--color-text)]">{isAdmin ? "Administrator" : isAuctioneer ? "Auctioneer" : "Bidder"}</span>
                     </p>
                   </div>
 
-                  <div className="px-2 pt-1.5 pb-0.5">
-                    <Link 
-                      href="/api/auth/signout" 
-                      onClick={() => setIsProfileDropdownOpen(false)}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-red-600 hover:text-white bg-red-50 hover:bg-red-600 rounded-lg transition-colors border border-red-100 hover:border-red-600 shadow-sm"
+                  <div className="px-3 pt-2 pb-1">
+                    {isAuctioneer && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab("settings");
+                          setIsProfileDropdownOpen(false);
+                        }}
+                        className="mb-2 flex w-full items-center gap-2 rounded-xl border border-[var(--color-border)] px-3 py-2.5 text-xs font-bold text-[var(--color-text)] transition-colors hover:bg-[var(--color-input)]"
+                      >
+                        <Settings className="h-3.5 w-3.5 shrink-0 text-[var(--color-primary)]" />
+                        <span>Account settings</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileDropdownOpen(false);
+                        void handleLogout();
+                      }}
+                      className="flex w-full items-center gap-2 rounded-xl border border-[var(--color-primary)]/30 bg-[var(--color-secondary)] px-3 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[var(--color-primary)]"
                     >
                       <LogOut className="w-3.5 h-3.5 shrink-0" />
-                      <span>Disconnect Session</span>
-                    </Link>
+                      <span>Log out</span>
+                    </button>
                   </div>
                 </div>
               )}
@@ -234,19 +344,59 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
           </div>
         </header>
 
-        {/* DYNAMIC COMPONENT OVERLAY ROUTER ROUTING LOGIC */}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6 lg:p-8 bg-slate-50">
+        {/* DYNAMIC CONTENT ROUTER */}
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6 lg:p-8 bg-[var(--color-bg)]">
           <div className="mx-auto w-full max-w-7xl">
-            
-            {/* Overview / General Analytics Tab Panel */}
+            {accessPaymentMessage && (
+              <p className="mb-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 text-sm text-[var(--color-text)]" role="status">
+                {accessPaymentMessage}
+              </p>
+            )}
+
+            {/* Dashboard Overview */}
             {activeTab === "dashboard" && (
               <div className="space-y-6">
-                {isAuctioneer ? (
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-2">
-                    <h2 className="text-sm font-bold text-slate-900">Operational Workspace Dashboard</h2>
-                    <p className="text-xs text-slate-500 leading-relaxed">
-                      Welcome back administrator. Use your bottom console tray cards or sidebar tabs to launch property assets into the live WebRTC streaming floor pipeline.
+                {isAdmin ? (
+                  <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-6">
+                    <h2 className="text-lg font-bold text-[var(--color-text)]">Administrator dashboard</h2>
+                    <p className="mt-2 text-sm text-[var(--color-muted)]">
+                      Register verified auctioneers and review pending bidder deposit refunds.
                     </p>
+                    <button type="button" onClick={() => setActiveTab("auctioneers")} className="mt-4 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-bold text-white">
+                      Manage auctioneers and refunds
+                    </button>
+                    <button type="button" onClick={() => setActiveTab("users")} className="ml-3 mt-4 rounded-xl border border-[var(--color-primary)] px-4 py-2.5 text-sm font-bold text-[var(--color-primary)]">
+                      View and manage all users
+                    </button>
+                  </div>
+                ) : isAuctioneer ? (
+                  <div className="bg-[var(--color-card)] p-6 rounded-2xl border border-[var(--color-border)] shadow-sm space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h2 className="text-lg font-bold text-[var(--color-text)]">Auctioneer Dashboard</h2>
+                        <p className="text-xs text-[var(--color-muted)] mt-1">
+                          Manage listings, monitor live bids, and track payments
+                        </p>
+                      </div>
+                      <div className="w-10 h-10 rounded-xl bg-[var(--color-secondary)]/20 flex items-center justify-center">
+                        <BarChart3 className="w-5 h-5 text-[var(--color-primary)]" />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                      {[
+                        ["Active Auctions", serializedAuctionItems.filter((item) => ["ACTIVE", "LIVE"].includes(item.status)).length],
+                        ["Total Bids", dashboardStats?.totalBids ?? 0],
+                        ["Paid Sales", dashboardStats?.completedSales ?? 0],
+                        ["Sales Revenue", `MWK ${Number(dashboardStats?.completedSalesRevenue || 0).toLocaleString()}`],
+                        ["Auction Success Rate", `${dashboardStats?.auctionSuccessRate ?? 0}%`],
+                      ].map(([label, value]) => (
+                        <div key={label} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-input)] p-5">
+                          <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">{label}</p>
+                          <p className="text-3xl font-extrabold text-[var(--color-primary)]">{value}</p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   <BidderDashboard />
@@ -254,30 +404,95 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
               </div>
             )}
 
-            {/* Live Operations Floor - Swaps display views natively based on session access role */}
-            {activeTab === "live-console" && (
+            {/* Manage Auctions (Auctioneer) / Live Auction Floor (Bidder) */}
+            {activeTab === "live-auctions" && !isAdmin && (
               isAuctioneer ? (
                 <AuctioneerLiveConsole 
                   auctionItems={serializedAuctionItems} 
-                  onItemsUpdate={(updated) => console.log("Broadcaster sync state: ", updated.length)}
+                  onItemsUpdate={(updated) => console.log("Broadcaster sync: ", updated.length)}
                 />
               ) : (
                 <BidderLiveConsole auctionItems={serializedAuctionItems} />
               )
             )}
 
-            {/* Asset Management System (Exclusively constrained to admin instances) */}
-            {activeTab === "manage-assets" && isAuctioneer && (
+            {/* Daily Sales (Bidder) — regular sold commodities with search */}
+            {activeTab === "daily-sales" && isBidder && (
+              <BidderMarketplace initialTab="daily-sales" />
+            )}
+
+            {/* Properties (Bidder) — land & buildings searchable by location */}
+            {activeTab === "properties" && isBidder && (
+              <BidderMarketplace initialTab="properties" />
+            )}
+
+            {/* My Bids (Bidder only) */}
+            {activeTab === "my-bids" && isBidder && (
+              <Mybids/>
+            )}
+
+            {/* Manage Listings (Auctioneer only) */}
+            {activeTab === "manage-listings" && isAuctioneer && (
               <AuctioneerManageAssets />
             )}
 
-            {/* FinTech Escrow Verification Ledger */}
+            {/* Add Listing form (redirect target of the Add Listing button) */}
+            {activeTab === "add-listing" && isAuctioneer && (
+              <AuctioneerAddListing initialMode={addListingInitialMode} />
+            )}
+
+            {/* Payments received / bidder receipts */}
             {activeTab === "payments" && (
-              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                <h2 className="text-sm font-bold text-slate-900 mb-2">PayChangu Gateway Ledger</h2>
-                <p className="text-xs text-slate-500 mb-4">Track non-refundable bidding fees, process automated refunds, and verify collateral security deposits.</p>
-                <div className="p-8 border border-dashed border-slate-200 rounded-xl bg-slate-50 text-center text-xs text-slate-400 font-medium">
-                  Bank Reference Reconciliation Node Listening.
+              isAuctioneer
+                ? <AuctioneerFinance view="payments" />
+                : <PaymentHistory role={user?.role} />
+            )}
+
+            {activeTab === "reports" && isAuctioneer && (
+              <AuctioneerFinance view="reports" />
+            )}
+
+            {activeTab === "auctioneers" && isAdmin && (
+              <AdminAuctioneerManager />
+            )}
+
+            {activeTab === "users" && isAdmin && (
+              <AdminUserManager />
+            )}
+
+            {/* Settings */}
+            {activeTab === "settings" && (
+              <div className="bg-[var(--color-card)] p-6 rounded-2xl border border-[var(--color-border)] shadow-sm max-w-2xl">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h2 className="text-lg font-bold text-[var(--color-text)] mb-1">Account Settings</h2>
+                    <p className="text-xs text-[var(--color-muted)]">Manage profile, notifications, and security</p>
+                  </div>
+                  <div className="w-10 h-10 rounded-xl bg-[var(--color-secondary)]/20 flex items-center justify-center">
+                    <Settings className="w-5 h-5 text-[var(--color-primary)]" />
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {isAuctioneer && <AuctioneerPasswordChange />}
+
+                  <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-input)] p-4">
+                    <h3 className="text-sm font-bold text-[var(--color-text)]">Account details</h3>
+                    <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                      <div>
+                        <dt className="text-xs text-[var(--color-muted)]">Name</dt>
+                        <dd className="mt-1 font-semibold text-[var(--color-text)]">{user?.name || "Not provided"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-[var(--color-muted)]">Email</dt>
+                        <dd className="mt-1 break-all font-semibold text-[var(--color-text)]">{user?.email || "Not provided"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-[var(--color-muted)]">Role</dt>
+                        <dd className="mt-1 font-semibold text-[var(--color-text)]">{user?.role || "BIDDER"}</dd>
+                      </div>
+                    </dl>
+                  </div>
                 </div>
               </div>
             )}
@@ -287,55 +502,98 @@ export default function DashboardLayoutFrame({ user, serializedAuctionItems, isA
       </div>
 
       {/* ========================================================
-          MOBILE APPLICATION FLOATING BOTTOM APP NAVIGATION BAR (Sticky on Base)
+          MOBILE BOTTOM NAVIGATION
          ======================================================== */}
-      <div className="md:hidden fixed bottom-0 inset-x-0 bg-white/90 backdrop-blur-md border-t border-slate-200 h-16 flex items-center justify-around px-2 z-50 shadow-lg">
-        
+      <div className="md:hidden fixed bottom-0 inset-x-0 bg-[var(--color-card)]/95 backdrop-blur-md border-t border-[var(--color-border)] h-16 flex items-center justify-around px-2 z-50 shadow-lg shadow-black/20">
+
         <button
           onClick={() => setActiveTab("dashboard")}
           className={`flex flex-col items-center justify-center flex-1 h-full py-2 transition-all ${
-            activeTab === "dashboard" ? "text-indigo-600 scale-105 font-bold" : "text-slate-500 font-medium"
+            activeTab === "dashboard" ? "text-[var(--color-primary)] scale-105 font-bold" : "text-[var(--color-muted)] font-medium"
           }`}
         >
           <LayoutDashboard className="w-5 h-5 mb-0.5" />
-          <span className="text-[10px] tracking-tight">Overview</span>
+          <span className="text-[10px] tracking-tight">Home</span>
         </button>
 
-        <button
-          onClick={() => setActiveTab("live-console")}
+        {!isAdmin && <button
+          onClick={() => setActiveTab("live-auctions")}
           className={`flex flex-col items-center justify-center flex-1 h-full py-2 transition-all relative ${
-            activeTab === "live-console" ? "text-indigo-600 scale-105 font-bold" : "text-slate-500 font-medium"
+            activeTab === "live-auctions" ? "text-[var(--color-primary)] scale-105 font-bold" : "text-[var(--color-muted)] font-medium"
           }`}
         >
           <Tv className="w-5 h-5 mb-0.5" />
           <span className="text-[10px] tracking-tight">
-            {isAuctioneer ? "Console" : "Live Floor"}
+            {isAuctioneer ? "Manage" : "Bids"}
           </span>
           {liveCount > 0 && (
             <span className="absolute top-2.5 right-6 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
           )}
-        </button>
+        </button>}
+
+        {isAdmin && (
+          <button onClick={() => setActiveTab("auctioneers")} className={`flex flex-col items-center justify-center flex-1 h-full py-2 ${activeTab === "auctioneers" ? "text-[var(--color-primary)]" : "text-[var(--color-muted)]"}`}>
+            <User className="mb-0.5 h-5 w-5" />
+            <span className="text-[10px] tracking-tight">Admin</span>
+          </button>
+        )}
+
+        {isBidder && (
+          <button
+            onClick={() => setActiveTab("daily-sales")}
+            className={`flex flex-col items-center justify-center flex-1 h-full py-2 transition-all ${
+              activeTab === "daily-sales" ? "text-[var(--color-primary)] scale-105 font-bold" : "text-[var(--color-muted)] font-medium"
+            }`}
+          >
+            <ShoppingBag className="w-5 h-5 mb-0.5" />
+            <span className="text-[10px] tracking-tight">Daily</span>
+          </button>
+        )}
+
+        {isBidder && (
+          <button
+            onClick={() => setActiveTab("properties")}
+            className={`flex flex-col items-center justify-center flex-1 h-full py-2 transition-all ${
+              activeTab === "properties" ? "text-[var(--color-primary)] scale-105 font-bold" : "text-[var(--color-muted)] font-medium"
+            }`}
+          >
+            <Home className="w-5 h-5 mb-0.5" />
+            <span className="text-[10px] tracking-tight">Props</span>
+          </button>
+        )}
 
         {isAuctioneer && (
           <button
-            onClick={() => setActiveTab("manage-assets")}
+            onClick={() => setActiveTab("manage-listings")}
             className={`flex flex-col items-center justify-center flex-1 h-full py-2 transition-all ${
-              activeTab === "manage-assets" ? "text-indigo-600 scale-105 font-bold" : "text-slate-500 font-medium"
+              activeTab === "manage-listings" ? "text-[var(--color-primary)] scale-105 font-bold" : "text-[var(--color-muted)] font-medium"
             }`}
           >
             <FolderGit className="w-5 h-5 mb-0.5" />
-            <span className="text-[10px] tracking-tight">Assets</span>
+            <span className="text-[10px] tracking-tight">Listings</span>
+          </button>
+        )}
+
+        {isBidder && (
+          <button
+            onClick={() => setActiveTab("my-bids")}
+            className={`flex flex-col items-center justify-center flex-1 h-full py-2 transition-all ${
+              activeTab === "my-bids" ? "text-[var(--color-primary)] scale-105 font-bold" : "text-[var(--color-muted)] font-medium"
+            }`}
+          >
+            <Gavel className="w-5 h-5 mb-0.5" />
+            <span className="text-[10px] tracking-tight">My Bids</span>
           </button>
         )}
 
         <button
           onClick={() => setActiveTab("payments")}
           className={`flex flex-col items-center justify-center flex-1 h-full py-2 transition-all ${
-            activeTab === "payments" ? "text-indigo-600 scale-105 font-bold" : "text-slate-500 font-medium"
+            activeTab === "payments" ? "text-[var(--color-primary)] scale-105 font-bold" : "text-[var(--color-muted)] font-medium"
           }`}
         >
           <Wallet className="w-5 h-5 mb-0.5" />
-          <span className="text-[10px] tracking-tight">Payments</span>
+          <span className="text-[10px] tracking-tight">{isAuctioneer ? "Payments" : "Receipts"}</span>
         </button>
 
       </div>

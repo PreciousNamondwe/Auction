@@ -1,39 +1,14 @@
 import Google from "next-auth/providers/google";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { PrismaClient } from "@prisma/client";
-import { PrismaMariaDb } from "@prisma/adapter-mariadb";
+import { randomUUID } from "node:crypto";
+import { eq, sql } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { users } from "@/lib/db/schema";
 import bcrypt from "bcryptjs";
 
-// Global declaration to prevent open database handle leaks during Next.js Hot Reloads
-const globalForPrisma = globalThis;
-
-function getPrismaClient() {
-  if (globalForPrisma.prisma) {
-    return globalForPrisma.prisma;
-  }
-
-  const connectionString = process.env.DATABASE_URL || "mysql://root:root@127.0.0.1:3306/e-auction";
-  const dbUrl = new URL(connectionString);
-
-  const dbAdapter = new PrismaMariaDb({
-    host: dbUrl.hostname,
-    port: parseInt(dbUrl.port || "3306", 10),
-    user: dbUrl.username,
-    password: dbUrl.password,
-    database: dbUrl.pathname.replace("/", ""),
-  });
-
-  const client = new PrismaClient({ adapter: dbAdapter });
-
-  if (process.env.NODE_ENV !== "production") {
-    globalForPrisma.prisma = client;
-  }
-
-  return client;
-}
-
 export const authConfig = {
+  trustHost: true,
   session: {
     strategy: "jwt",
   },
@@ -46,17 +21,14 @@ export const authConfig = {
     Credentials({
       name: "credentials",
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null;
+        const email = typeof credentials?.email === "string" ? credentials.email.trim().toLowerCase() : "";
+        if (!email || !credentials?.password) return null;
 
-        const prisma = getPrismaClient();
+        const [user] = await db.select().from(users)
+          .where(sql`lower(trim(${users.email})) = ${email}`)
+          .limit(1);
 
-        // Query the user table securely
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email }
-        });
-
-        // Verify user presence and password match safely
-        if (!user || !user.password) return null;
+        if (!user?.password?.startsWith("$2")) return null;
         const isPasswordValid = await bcrypt.compare(credentials.password, user.password);
 
         if (!isPasswordValid) return null;
@@ -65,32 +37,48 @@ export const authConfig = {
           id: String(user.id), 
           email: user.email,
           name: user.name,
-          role: user.role, // Passed directly into the initial JWT token execution
+          role: user.role,
         };
       }
     })
   ],
   callbacks: {
-    async jwt({ token, user, account }) {
-      const prisma = getPrismaClient();
+    async signIn({ user, account }) {
+      if (account?.provider !== "google" || !user.email) return true;
 
-      // 1. Initial Login Event Handlers
+      const email = user.email.trim().toLowerCase();
+      const [existingUser] = await db.select().from(users)
+        .where(sql`lower(trim(${users.email})) = ${email}`)
+        .limit(1);
+      if (existingUser) return true;
+
+      await db.insert(users).values({
+        name: user.name || user.email,
+        email,
+        password: `oauth:${randomUUID()}`,
+        phoneNumber: "",
+        isVerified: true,
+      }).onConflictDoNothing({ target: users.email });
+
+      return true;
+    },
+    async jwt({ token, user, account }) {
       if (user) {
         token.id = user.id; 
         token.role = user.role;
       }
 
-      // 2. Social Sign-In Safeguard (Google Oauth doesn't execute authorize method)
       if (account?.provider === "google" && token.email) {
-        const dbUser = await prisma.user.findUnique({
-          where: { email: token.email }
-        });
+        const email = token.email.trim().toLowerCase();
+        const [dbUser] = await db.select().from(users)
+          .where(sql`lower(trim(${users.email})) = ${email}`)
+          .limit(1);
         if (dbUser) {
           token.id = String(dbUser.id);
           token.role = dbUser.role;
         }
       }
-      
+
       return token;
     },
     async session({ session, token }) {
@@ -103,4 +91,13 @@ export const authConfig = {
   },
 };
 
-export const { handlers, auth, signIn, signOut } = NextAuth(authConfig);
+// Do not call `NextAuth` at module load time. Route handlers should create
+// a fresh NextAuth instance in the route to avoid side effects during build.
+// Provide a lazy `auth` helper that's created at call time to avoid
+// executing NextAuth during module import (prevents build-time side effects).
+export async function auth(...args) {
+  const { auth: authFn } = NextAuth(authConfig);
+  return authFn(...args);
+}
+
+export default authConfig;

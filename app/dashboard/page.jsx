@@ -1,6 +1,8 @@
 import { auth } from "../../auth";
 import { redirect } from "next/navigation";
-import { prisma } from "@/lib/prisma"; 
+import { db } from "@/lib/db";
+import { assets, auctionItems, auctionSettlements, bids, sales } from "@/lib/db/schema";
+import { and, count, desc, eq, inArray, sum } from "drizzle-orm";
 import DashboardLayoutFrame from "@/components/dashboard/DashboardLayoutFrame";
 
 export default async function DashboardPage() {
@@ -19,17 +21,39 @@ export default async function DashboardPage() {
   
   const isAuctioneer = user.role === "AUCTIONEER";
   let serializedAuctionItems = [];
+  let dashboardStats = null;
   
   if (isAuctioneer) {
-    const rawAuctionItems = await prisma.auctionItem.findMany({
-      include: { asset: true },
-      orderBy: { createdAt: "desc" },
-    });
+    const rawAuctionItems = await db.select({
+      id: auctionItems.id,
+      assetId: auctionItems.assetId,
+      reservePrice: auctionItems.reservePrice,
+      reservePriceDisclosed: auctionItems.reservePriceDisclosed,
+      startingBid: auctionItems.startingBid,
+      depositAmount: auctionItems.depositAmount,
+      status: auctionItems.status,
+      liveRoomId: auctionItems.liveRoomId,
+      startTime: auctionItems.startTime,
+      endTime: auctionItems.endTime,
+      createdAt: auctionItems.createdAt,
+      updatedAt: auctionItems.updatedAt,
+      title: assets.title,
+      description: assets.description,
+      location: assets.location,
+      category: assets.category,
+      documentUrl: assets.documentUrl,
+      assetCreatedAt: assets.createdAt,
+      assetUpdatedAt: assets.updatedAt,
+    }).from(auctionItems)
+      .innerJoin(assets, eq(auctionItems.assetId, assets.id))
+      .where(and(eq(assets.createdById, user.id), eq(assets.listingType, "AUCTION")))
+      .orderBy(desc(auctionItems.createdAt));
 
     serializedAuctionItems = rawAuctionItems.map((item) => ({
       id: Number(item.id),
       assetId: Number(item.assetId),
       reservePrice: item.reservePrice ? Number(item.reservePrice) : 0,
+      reservePriceDisclosed: Boolean(item.reservePriceDisclosed),
       startingBid: item.startingBid ? Number(item.startingBid) : 0,
       depositAmount: item.depositAmount ? Number(item.depositAmount) : 0,
       status: item.status || "UPCOMING",
@@ -38,17 +62,38 @@ export default async function DashboardPage() {
       endTime: item.endTime ? item.endTime.toISOString() : null,
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
-      asset: item.asset ? {
-        id: Number(item.asset.id),
-        title: item.asset.title || "Unnamed Asset",
-        description: item.asset.description || "",
-        location: item.asset.location || "",
-        category: item.asset.category || "OTHER",
-        documentUrl: item.asset.documentUrl || null,
-        createdAt: item.asset.createdAt.toISOString(),
-        updatedAt: item.asset.updatedAt.toISOString(),
-      } : null,
+      asset: {
+        id: Number(item.assetId),
+        title: item.title || "Unnamed Asset",
+        description: item.description || "",
+        location: item.location || "",
+        category: item.category || "OTHER",
+        documentUrl: item.documentUrl || null,
+        createdAt: item.assetCreatedAt.toISOString(),
+        updatedAt: item.assetUpdatedAt.toISOString(),
+      },
     }));
+
+    const auctionIds = serializedAuctionItems.map((item) => item.id);
+    const [bidTotals, salesTotals, settlements] = await Promise.all([
+      auctionIds.length
+        ? db.select({ total: count() }).from(bids).where(inArray(bids.auctionItemId, auctionIds))
+        : Promise.resolve([{ total: 0 }]),
+      db.select({ total: count(), revenue: sum(sales.amount) }).from(sales)
+        .where(and(eq(sales.sellerId, user.id), eq(sales.status, "PAID"))),
+      auctionIds.length
+        ? db.select({ winnerId: auctionSettlements.winnerId }).from(auctionSettlements)
+            .where(inArray(auctionSettlements.auctionItemId, auctionIds))
+        : Promise.resolve([]),
+    ]);
+    dashboardStats = {
+      totalBids: bidTotals[0]?.total || 0,
+      completedSales: salesTotals[0]?.total || 0,
+      completedSalesRevenue: Number(salesTotals[0]?.revenue || 0),
+      auctionSuccessRate: settlements.length
+        ? Math.round((settlements.filter((settlement) => settlement.winnerId !== null).length / settlements.length) * 100)
+        : 0,
+    };
   }
 
   return (
@@ -56,6 +101,7 @@ export default async function DashboardPage() {
       user={user} 
       serializedAuctionItems={serializedAuctionItems} 
       isAuctioneer={isAuctioneer} 
+      dashboardStats={dashboardStats}
     />
   );
 }

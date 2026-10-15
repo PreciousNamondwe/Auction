@@ -5,13 +5,8 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 First, run the development server:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+create a folder called .devcontainer in the root folder of codespace
+create a file called devcontainer.json in the .devcontainer folder as [project folder]/.devcontainer/devcontainer.json
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
@@ -34,3 +29,19 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Marketplace and account roles
+
+The landing page links to public daily-sale goods, property categories, and scheduled/live auctions. The marketplace supports category, price, auctioneer, location, and (for properties) sale/lease filters. Purchasing a daily-sale good or property requires a bidder account. Public registration always creates a bidder; administrators create auctioneer accounts from the administrator dashboard after verifying the auctioneer's contact and address details. Auctioneers can change their initial administrator-provided password under Dashboard → Settings; the change requires the current password and a new password of at least 12 characters.
+
+## Auction settlement and email
+
+Apply database migrations with `npm run db:migrate` after deploying schema changes. Live-auction controls allow auctioneers to disclose the reserve price and extend active auctions by 5, 10, or 20 seconds. Auctions are settled when the auctioneer closes them or by the scheduled `/api/cron/auction-settlements` job. Configure `CRON_SECRET` for scheduled jobs.
+
+Settlement creates an administrator refund queue for unsuccessful bidders' paid bidding deposits and any unused winning deposit. These refunds are **not automatically transferred**: an administrator must issue each payout through PayChangu and record its payout reference in the dashboard. Auction result and refund status emails use the SMTP variables in `.env.example` (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM`). Configure them in the deployment environment; do not commit credentials.
+
+## Google sign-in and administrator setup
+
+Google sign-in uses NextAuth's Google provider. Set `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` in the environment and allow `https://<your-domain>/api/auth/callback/google` in Google Cloud Console. Google users are bidders by default; an account already registered as an administrator retains its administrator role when signing in with the same Google email.
+
+To create or promote an administrator, set `ADMIN_NAME`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` (at least 12 characters) in the environment, then run `npm run seed:admin`. The command creates an administrator if that email is new, or promotes the matching account and updates its password if it already exists. Keep these values private and remove them from the environment after seeding. Sign in with Google using the same email or use the seeded password to access the administrator dashboard and monitor auctioneer accounts and refunds.

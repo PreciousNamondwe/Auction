@@ -29,8 +29,8 @@ export default function AuctioneerDashboard({ user, auctionItems: initialAuction
   ]);
 
   const [form, setForm] = useState({
-    title: "", description: "", location: "", documentUrl: "",
-    startingBid: "", reservePrice: "", depositAmount: ""
+    title: "", description: "", clientName: "", documentUrl: "",
+    startingBid: "", reservePrice: "", entryFee: "", biddingDeposit: ""
   });
 
   const addSpecificationRow = () => setDynamicAttributes([...dynamicAttributes, { key: "", value: "" }]);
@@ -56,11 +56,12 @@ export default function AuctioneerDashboard({ user, auctionItems: initialAuction
       const formData = new FormData();
       formData.append("title", form.title);
       formData.append("description", form.description);
-      formData.append("location", form.location);
+      formData.append("clientName", form.clientName);
       formData.append("documentUrl", form.documentUrl);
       formData.append("startingBid", form.startingBid);
       formData.append("reservePrice", form.reservePrice);
-      formData.append("depositAmount", form.depositAmount);
+      formData.append("entryFee", form.entryFee);
+      formData.append("biddingDeposit", form.biddingDeposit);
       formData.append("category", finalCategory);
       formData.append("dynamicAttributes", JSON.stringify(dynamicAttributes));
 
@@ -73,7 +74,7 @@ export default function AuctioneerDashboard({ user, auctionItems: initialAuction
       const res = await createAssetAndAuction(formData);
       if (res.success) {
         alert(`🎉 Lot Registered Successfully! Added to database registry.`);
-        setForm({ title: "", description: "", location: "", documentUrl: "", startingBid: "", reservePrice: "", depositAmount: "" });
+        setForm({ title: "", description: "", clientName: "", documentUrl: "", startingBid: "", reservePrice: "", entryFee: "", biddingDeposit: "" });
         setDynamicAttributes([{ key: "Condition", value: "Excellent" }]);
         setUploadedFile(null);
         e.target.reset(); 
@@ -100,10 +101,16 @@ export default function AuctioneerDashboard({ user, auctionItems: initialAuction
       const computedRoomId = `room-lot-${itemId}-${Date.now()}`;
       
       // 💾 PERSIST TO DATABASE: Flipped directly via server action
-      await updateAuctionToLiveDirectly(itemId, computedRoomId);
+      const updateResult = await updateAuctionToLiveDirectly(itemId, computedRoomId);
+      if (!updateResult?.success) {
+        throw new Error(updateResult?.error || "Could not start this auction.");
+      }
       
       // Get connection pass for room entrance
       const tokenPayload = await getLiveKitToken(computedRoomId, itemId);
+      if (!tokenPayload?.success) {
+        throw new Error(tokenPayload?.error || "Could not connect to the live auction.");
+      }
       alert(`⚡ Database status successfully set to ACTIVE for Lot #${itemId}! Routing to room viewport...`);
       
       // Synchronize client interface array
@@ -132,6 +139,9 @@ export default function AuctioneerDashboard({ user, auctionItems: initialAuction
       const targetRoomId = item.liveRoomId || `room-lot-${item.id}-active`;
       
       const tokenPayload = await getLiveKitToken(targetRoomId, item.id);
+      if (!tokenPayload?.success) {
+        throw new Error(tokenPayload?.error || "Could not connect to the live auction.");
+      }
       router.push(`/auctions/live/${targetRoomId}?token=${tokenPayload.token}&id=${item.id}`);
     } catch (err) {
       alert("Could not pull connection pass token parameters: " + err.message);
@@ -149,7 +159,10 @@ export default function AuctioneerDashboard({ user, auctionItems: initialAuction
       setIsActionLoadingId(itemId);
       
       // 💾 PERSIST TO DATABASE: Writes CLOSED to MySQL row
-      await closeLiveAuctionDirectly(itemId);
+      const result = await closeLiveAuctionDirectly(itemId);
+      if (!result?.success) {
+        throw new Error(result?.error || "Could not close this auction.");
+      }
       
       // Instantly drop it out from our layout view by filtering local state
       setItemsList(prevItems => prevItems.map(item => item.id === itemId ? { ...item, status: "CLOSED" } : item));
@@ -230,8 +243,8 @@ export default function AuctioneerDashboard({ user, auctionItems: initialAuction
               <input type="text" required placeholder="e.g. 2022 Toyota Hilux D-4D" value={form.title} onChange={(e) => setForm({...form, title: e.target.value})} className="w-full bg-slate-50 border border-slate-200 px-3 py-2.5 text-xs rounded-xl focus:outline-none" />
             </div>
             <div>
-              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Physical Location</label>
-              <input type="text" required placeholder="e.g. Blantyre Transit Depot" value={form.location} onChange={(e) => setForm({...form, location: e.target.value})} className="w-full bg-slate-50 border border-slate-200 px-3 py-2.5 text-xs rounded-xl focus:outline-none" />
+              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Client Name</label>
+              <input type="text" required placeholder="e.g. John Banda" value={form.clientName} onChange={(e) => setForm({...form, clientName: e.target.value})} className="w-full bg-slate-50 border border-slate-200 px-3 py-2.5 text-xs rounded-xl focus:outline-none" />
             </div>
           </div>
 
@@ -290,9 +303,16 @@ export default function AuctioneerDashboard({ user, auctionItems: initialAuction
                 <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Reserve Price (MWK)</label>
                 <input type="number" required placeholder="7500000" value={form.reservePrice} onChange={(e) => setForm({...form, reservePrice: e.target.value})} className="w-full bg-white border border-slate-200 px-3 py-2.5 text-xs rounded-xl focus:outline-none" />
               </div>
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Security Deposit (MWK)</label>
-                <input type="number" required placeholder="250000" value={form.depositAmount} onChange={(e) => setForm({...form, depositAmount: e.target.value})} className="w-full bg-white border border-slate-200 px-3 py-2.5 text-xs rounded-xl focus:outline-none" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Entry Fee to Participate (MWK)</label>
+                  <input type="number" min="1" required placeholder="250000" value={form.entryFee} onChange={(e) => setForm({...form, entryFee: e.target.value})} className="w-full bg-white border border-slate-200 px-3 py-2.5 text-xs rounded-xl focus:outline-none" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Bidding Funds / Security Deposit (MWK)</label>
+                  <input type="number" min="1" required placeholder="Must exceed the starting bid" value={form.biddingDeposit} onChange={(e) => setForm({...form, biddingDeposit: e.target.value})} className="w-full bg-white border border-slate-200 px-3 py-2.5 text-xs rounded-xl focus:outline-none" />
+                  <p className="mt-1 text-[10px] text-slate-500">Paid funds set the maximum bid a bidder can place.</p>
+                </div>
               </div>
             </div>
           </div>

@@ -1,133 +1,518 @@
-// /workspaces/Auction/e-auction/components/dashboard/BidderDashboard.jsx
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { getActiveLiveAuctions } from "@/app/actions/liveAuction";
-import Pusher from "pusher-js";
-import { Bell, Video, X, MapPin } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import Link from "next/link";
+import {
+  Gavel,
+  Clock,
+  Trophy,
+  TrendingUp,
+  TrendingDown,
+  Wallet,
+  Receipt,
+  Package,
+  Calendar,
+  Activity,
+  ChevronRight,
+  AlertCircle,
+  Shield,
+  Zap,
+} from "lucide-react";
 
 export default function BidderDashboard() {
-  const router = useRouter();
-  const [activeNotifications, setActiveNotifications] = useState([]);
+  const [dashboard, setDashboard] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  // Fetch pre-existing live sessions from Database + Bind Web Sockets
+  // Fetch dashboard data
   useEffect(() => {
-    async function syncActiveLots() {
-      const res = await getActiveLiveAuctions();
-      if (res.success && res.items.length > 0) {
-        setActiveNotifications(res.items);
+    async function fetchDashboard() {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const res = await fetch("/api/dashboard/bidder");
+        const json = await res.json();
+
+        if (!res.ok) {
+          throw new Error(json.error || "Failed to load dashboard");
+        }
+
+        setDashboard(json.data);
+      } catch (err) {
+        console.error("Dashboard fetch error:", err);
+        setError(err.message);
+      } finally {
+        setLoading(false);
       }
     }
-    
-    // 1. Initial State DB catch-up execution
-    syncActiveLots();
 
-    // 2. Real-time Pusher stream synchronization setup
-    const pusherClient = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY || "", {
-      cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER || "",
-    });
-
-    const channel = pusherClient.subscribe("global-notifications");
-
-    channel.bind("new-live-lot", (data) => {
-      // Append newly arriving live items to the tracking array without overwriting others
-      setActiveNotifications((prev) => {
-        const alreadyExists = prev.some(item => item.roomId === data.roomId);
-        if (alreadyExists) return prev;
-        return [data, ...prev];
-      });
-    });
-
-    return () => {
-      channel.unbind_all();
-      pusherClient.unsubscribe("global-notifications");
-    };
+    fetchDashboard();
   }, []);
 
-  const dismissNotification = (roomId) => {
-    setActiveNotifications(prev => prev.filter(item => item.roomId !== roomId));
+  const formatCurrency = (amount) => {
+    if (amount === null || amount === undefined) return "MWK 0.00";
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "MWK",
+      minimumFractionDigits: 2,
+    }).format(Number(amount));
   };
 
-  return (
-    <div className="min-h-screen bg-slate-950 p-6 text-white relative">
-      <h1 className="text-xl font-bold">Available Auction Catalog</h1>
-      <p className="text-sm text-slate-400 mt-1">Select an asset or wait for a live streaming feed call.</p>
+  const getAuctionHref = (auctionItem) => auctionItem.liveRoomId
+    ? `/auctions/live/${encodeURIComponent(auctionItem.liveRoomId)}?id=${encodeURIComponent(auctionItem.id)}`
+    : "/marketplace?tab=auctions";
 
-      {/* Grid view wrapper context for active database listings */}
-      <div className="mt-6 border border-dashed border-slate-800 rounded-2xl h-64 flex items-center justify-center text-slate-600 text-xs">
-        General Platform Catalog View
+  const formatDate = (date) => {
+    if (!date) return "N/A";
+    return new Date(date).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+
+  const getTimeRemaining = (endTime) => {
+    if (!endTime) return "N/A";
+    const end = new Date(endTime);
+    const now = new Date();
+    const diff = end - now;
+    if (diff <= 0) return "Ended";
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    if (days > 0) return `${days}d ${hours}h left`;
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    if (hours > 0) return `${hours}h ${minutes}m left`;
+    return `${minutes}m left`;
+  };
+
+  const getStatusBadge = (status) => {
+    const styles = {
+      WINNING: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
+      OUTBID: "bg-rose-500/10 text-rose-600 border-rose-500/20",
+      ACTIVE: "bg-amber-500/10 text-amber-600 border-amber-500/20",
+      WON: "bg-violet-500/10 text-violet-600 border-violet-500/20",
+      LOST: "bg-slate-500/10 text-slate-600 border-slate-500/20",
+      PENDING: "bg-amber-500/10 text-amber-600 border-amber-500/20",
+      APPROVED: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
+      REJECTED: "bg-rose-500/10 text-rose-600 border-rose-500/20",
+      UPCOMING: "bg-blue-500/10 text-blue-600 border-blue-500/20",
+      CLOSED: "bg-slate-500/10 text-slate-600 border-slate-500/20",
+    };
+    return styles[status] || styles.ACTIVE;
+  };
+
+  // ── LOADING STATE ─────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="animate-pulse">
+          <div className="h-8 bg-[var(--color-input)] rounded w-64 mb-2" />
+          <div className="h-4 bg-[var(--color-input)] rounded w-96" />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-28 bg-[var(--color-input)] rounded-2xl" />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 h-80 bg-[var(--color-input)] rounded-2xl" />
+          <div className="h-80 bg-[var(--color-input)] rounded-2xl" />
+        </div>
+      </div>
+    );
+  }
+
+  // ── ERROR STATE ───────────────────────────────────────────────────
+  if (error) {
+    return (
+      <div className="bg-[var(--color-card)] p-8 rounded-2xl border border-[var(--color-border)] shadow-sm text-center">
+        <AlertCircle className="w-12 h-12 text-rose-500 mx-auto mb-4 opacity-70" />
+        <h2 className="text-lg font-bold text-[var(--color-text)] mb-2">Failed to Load Dashboard</h2>
+        <p className="text-sm text-[var(--color-muted)] mb-6">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="bg-[var(--color-secondary)] hover:bg-[var(--color-primary)] text-white px-6 py-2.5 rounded-full text-sm font-bold transition-all"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!dashboard) return null;
+
+  const {
+    stats,
+    recentBids,
+    winningBids,
+    upcomingAuctions,
+    registeredAuctions,
+  } = dashboard;
+
+  // ── MAIN DASHBOARD ────────────────────────────────────────────────
+  return (
+    <div className="space-y-6">
+      {/* Welcome Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--color-text)]">Bidder Dashboard</h1>
+          <p className="text-sm text-[var(--color-muted)] mt-1">
+            Welcome back! Here is everything you need to track your auction activity.
+          </p>
+        </div>
+        <Link href="/marketplace?tab=auctions">
+          <button className="inline-flex items-center gap-2 bg-[var(--color-secondary)] hover:bg-[var(--color-primary)] text-white px-5 py-2.5 rounded-full text-sm font-bold transition-all hover:shadow-lg hover:shadow-[var(--color-primary)]/20">
+            <Zap className="w-4 h-4" />
+            Browse Auctions
+          </button>
+        </Link>
       </div>
 
-      {/* =========================================================
-          STACKED HUD OVERLAY: HANDLES BACKLOGGED AND FRESH SESSIONS
-          ========================================================= */}
-      <div className="fixed bottom-6 right-6 z-50 max-w-sm w-full flex flex-col gap-4 pointer-events-none">
-        {activeNotifications.map((notification) => (
-          <div 
-            key={notification.roomId} 
-            className="w-full bg-slate-900 border border-indigo-500/40 rounded-2xl overflow-hidden shadow-2xl pointer-events-auto animate-in slide-in-from-bottom-5 duration-300"
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          {
+            label: "Total Bids",
+            value: stats.totalBids,
+            icon: Gavel,
+            trend: null,
+            color: "text-blue-500",
+            bg: "bg-blue-500/10",
+          },
+          {
+            label: "Winning",
+            value: stats.winningBids,
+            icon: Trophy,
+            trend: null,
+            color: "text-emerald-500",
+            bg: "bg-emerald-500/10",
+          },
+          {
+            label: "Outbid",
+            value: stats.outbidCount,
+            icon: TrendingDown,
+            trend: null,
+            color: "text-rose-500",
+            bg: "bg-rose-500/10",
+          },
+          {
+            label: "Total Spent",
+            value: formatCurrency(stats.totalSpent),
+            icon: Wallet,
+            trend: null,
+            color: "text-violet-500",
+            bg: "bg-violet-500/10",
+          },
+        ].map((stat) => (
+          <div
+            key={stat.label}
+            className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl p-5 hover:border-[var(--color-primary)]/20 transition-all shadow-sm"
           >
-            {/* Asset Header Image */}
-            <div className="relative h-24 w-full bg-slate-950 border-b border-slate-800">
-              <img 
-                src={notification.imageUrl} 
-                alt={notification.itemTitle}
-                className="w-full h-full object-cover opacity-50"
-              />
-              <div className="absolute top-2.5 left-2.5 bg-red-600 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider animate-pulse flex items-center gap-1">
-                <span className="w-1 h-1 rounded-full bg-white" /> Active Stream
+            <div className="flex items-start justify-between mb-3">
+              <div className={`p-2.5 rounded-xl ${stat.bg}`}>
+                <stat.icon className={`w-5 h-5 ${stat.color}`} />
               </div>
-            </div>
-
-            <div className="p-4 flex items-start gap-3 relative">
-              <div className="p-2 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 rounded-xl shrink-0 mt-0.5">
-                <Bell className="w-4 h-4" />
-              </div>
-              
-              <div className="flex-1 min-w-0">
-                <h4 className="text-[10px] font-black uppercase tracking-wider text-indigo-300 flex items-center gap-1">
-                  <Video className="w-3.5 h-3.5" /> Live Room Operational
-                </h4>
-                
-                <h3 className="text-xs font-bold text-slate-100 mt-1 truncate">
-                  {notification.itemTitle}
-                </h3>
-
-                <div className="mt-2 space-y-1 bg-slate-950/50 p-2 rounded-xl border border-slate-800/60">
-                  <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                    <MapPin className="w-3 h-3 text-slate-500 shrink-0" />
-                    <span className="truncate">{notification.location}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-[10px] font-bold text-emerald-400 pt-0.5">
-                    <span>Opening Value:</span>
-                    <span>MWK {Number(notification.startingBid).toLocaleString()}</span>
-                  </div>
-                </div>
-                
-                {/* Router Link Dispatcher */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    router.push(`/auctions/live/${notification.roomId}?id=${notification.auctionItemId}`);
-                    dismissNotification(notification.roomId);
-                  }}
-                  className="mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs py-2 px-4 rounded-xl transition-all shadow-md shadow-indigo-900/30"
+              {stat.trend !== null && stat.trend !== undefined && (
+                <span
+                  className={`inline-flex items-center gap-0.5 text-xs font-semibold ${
+                    stat.trend >= 0 ? "text-emerald-500" : "text-rose-500"
+                  }`}
                 >
-                  Join Google Meet Floor
-                </button>
-              </div>
-
-              <button 
-                type="button"
-                onClick={() => dismissNotification(notification.roomId)}
-                className="text-slate-500 hover:text-slate-300 transition-colors shrink-0"
-              >
-                <X className="w-4 h-4" />
-              </button>
+                  {stat.trend >= 0 ? (
+                    <TrendingUp className="w-3.5 h-3.5" />
+                  ) : (
+                    <TrendingDown className="w-3.5 h-3.5" />
+                  )}
+                  {Math.abs(stat.trend)}%
+                </span>
+              )}
             </div>
+            <p className="text-2xl font-bold text-[var(--color-text)]">{stat.value}</p>
+            <p className="text-xs text-[var(--color-muted)] mt-1">{stat.label}</p>
           </div>
         ))}
+      </div>
+
+      {/* Main Content Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left Column - Recent Bids & Activity */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* Recent Bids Table */}
+          <div className="bg-[var(--color-card)] p-6 rounded-2xl border border-[var(--color-border)] shadow-sm">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-lg font-bold text-[var(--color-text)]">Recent Bids</h2>
+                <p className="text-xs text-[var(--color-muted)] mt-0.5">
+                  Your latest bidding activity
+                </p>
+              </div>
+              <Link href="/dashboard?tab=my-bids">
+                <button className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--color-primary)] hover:underline">
+                  View All
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </Link>
+            </div>
+
+            {recentBids.length === 0 ? (
+              <div className="p-8 border border-dashed border-[var(--color-border)] rounded-xl bg-[var(--color-input)]/30 text-center">
+                <Gavel className="w-10 h-10 text-[var(--color-muted)] mx-auto mb-2 opacity-50" />
+                <p className="text-sm text-[var(--color-muted)]">No bids placed yet</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-[var(--color-input)]/50 border-b border-[var(--color-border)]">
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-[var(--color-muted)] uppercase">Asset</th>
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-[var(--color-muted)] uppercase hidden sm:table-cell">Category</th>
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-[var(--color-muted)] uppercase">Amount</th>
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-[var(--color-muted)] uppercase">Status</th>
+                      <th className="text-right px-3 py-2.5 text-xs font-semibold text-[var(--color-muted)] uppercase">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--color-border)]">
+                    {recentBids.map((bid) => (
+                      <tr key={bid.id} className="hover:bg-[var(--color-input)]/30 transition-colors">
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-lg bg-[var(--color-input)] border border-[var(--color-border)] flex items-center justify-center overflow-hidden shrink-0">
+                              {bid.auctionItem.images?.[0]?.url ? (
+                                <img src={bid.auctionItem.images[0].url} alt="" className="w-full h-full object-cover" loading="lazy" />
+                              ) : (
+                                <Package className="w-4 h-4 text-[var(--color-muted)]" />
+                              )}
+                            </div>
+                            <p className="font-medium text-[var(--color-text)] truncate max-w-[160px]">
+                              {bid.auctionItem.asset.title}
+                            </p>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 hidden sm:table-cell">
+                          <span className="text-xs text-[var(--color-muted)] bg-[var(--color-input)] px-2 py-1 rounded-full border border-[var(--color-border)]">
+                            {bid.auctionItem.asset.category}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 font-semibold text-[var(--color-text)]">
+                          {formatCurrency(bid.amount)}
+                        </td>
+                        <td className="px-3 py-3">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border ${getStatusBadge(bid.status)}`}>
+                            {bid.status === "WINNING" ? <Trophy className="w-3 h-3" /> : bid.status === "OUTBID" ? <TrendingDown className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
+                            {bid.status}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 text-right text-xs text-[var(--color-muted)]">
+                          {getTimeRemaining(bid.auctionItem.endTime)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Winning Bids Section */}
+          {winningBids.length > 0 && (
+            <div className="bg-[var(--color-card)] p-6 rounded-2xl border border-[var(--color-border)] shadow-sm">
+              <div className="flex items-center justify-between mb-5">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-emerald-500/10">
+                    <Trophy className="w-4 h-4 text-emerald-500" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-[var(--color-text)]">Currently Winning</h2>
+                    <p className="text-xs text-[var(--color-muted)]">Auctions where you hold the highest bid</p>
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {winningBids.map((bid) => (
+                  <div
+                    key={bid.id}
+                    className="border border-[var(--color-border)] rounded-xl p-4 hover:border-emerald-500/30 transition-all bg-emerald-500/5"
+                  >
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-10 h-10 rounded-lg bg-[var(--color-input)] border border-[var(--color-border)] flex items-center justify-center overflow-hidden shrink-0">
+                          {bid.auctionItem.images?.[0]?.url ? (
+                            <img src={bid.auctionItem.images[0].url} alt="" className="w-full h-full object-cover" loading="lazy" />
+                          ) : (
+                            <Package className="w-5 h-5 text-[var(--color-muted)]" />
+                          )}
+                        </div>
+                        <div>
+                          <p className="font-semibold text-[var(--color-text)] text-sm">{bid.auctionItem.asset.title}</p>
+                          <p className="text-xs text-[var(--color-muted)]">{bid.auctionItem.asset.category}</p>
+                        </div>
+                      </div>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+                        <Trophy className="w-3 h-3" />
+                        Winning
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs text-[var(--color-muted)]">Your Bid</p>
+                        <p className="text-lg font-bold text-[var(--color-text)]">{formatCurrency(bid.amount)}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-[var(--color-muted)]">Time Left</p>
+                        <p className="text-sm font-semibold text-amber-500">{getTimeRemaining(bid.auctionItem.endTime)}</p>
+                      </div>
+                    </div>
+                    <Link href={getAuctionHref(bid.auctionItem)}>
+                      <button className="w-full mt-3 py-2 rounded-lg text-xs font-semibold bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500 hover:text-white transition-all border border-emerald-500/20">
+                        View Auction
+                      </button>
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Upcoming Auctions */}
+          {upcomingAuctions.length > 0 && (
+            <div className="bg-[var(--color-card)] p-6 rounded-2xl border border-[var(--color-border)] shadow-sm">
+              <div className="flex items-center justify-between mb-5">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-blue-500/10">
+                    <Calendar className="w-4 h-4 text-blue-500" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-[var(--color-text)]">Upcoming Auctions</h2>
+                    <p className="text-xs text-[var(--color-muted)]">Auctions starting soon you may be interested in</p>
+                  </div>
+                </div>
+                <Link href="/marketplace?tab=auctions">
+                  <button className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--color-primary)] hover:underline">
+                    View All
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </Link>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {upcomingAuctions.map((auction) => (
+                  <div
+                    key={auction.id}
+                    className="border border-[var(--color-border)] rounded-xl overflow-hidden hover:border-[var(--color-primary)]/30 transition-all group"
+                  >
+                    <div className="h-32 bg-[var(--color-input)] relative overflow-hidden">
+                      {auction.images?.[0]?.url ? (
+                        <img
+                          src={auction.images[0].url}
+                          alt={auction.asset.title}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <Package className="w-8 h-8 text-[var(--color-muted)] opacity-40" />
+                        </div>
+                      )}
+                      <div className="absolute top-2 left-2">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-600 border border-blue-500/20 backdrop-blur-sm">
+                          <Calendar className="w-3 h-3" />
+                          {auction.status}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="p-4">
+                      <p className="font-semibold text-[var(--color-text)] text-sm mb-1 truncate">{auction.asset.title}</p>
+                      <p className="text-xs text-[var(--color-muted)] mb-3">{auction.asset.category} &bull; {auction.asset.location}</p>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-xs text-[var(--color-muted)]">Starting Bid</p>
+                          <p className="font-bold text-[var(--color-text)]">{formatCurrency(auction.startingBid)}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs text-[var(--color-muted)]">Starts</p>
+                          <p className="text-xs font-semibold text-blue-500">{formatDate(auction.startTime)}</p>
+                        </div>
+                      </div>
+                      <Link href={getAuctionHref(auction)}>
+                        <button className="w-full mt-3 py-2 rounded-lg text-xs font-semibold bg-[var(--color-secondary)]/10 text-[var(--color-secondary)] hover:bg-[var(--color-secondary)] hover:text-white transition-all">
+                          View Details
+                        </button>
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div id="registered-auctions" className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm">
+            <div className="mb-5 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-[var(--color-text)]">My Registrations</h2>
+                <p className="mt-0.5 text-xs text-[var(--color-muted)]">
+                  {stats.totalRegistrations} registered auction{stats.totalRegistrations === 1 ? "" : "s"} · {stats.activeRegistrations} active
+                </p>
+              </div>
+              <Link href="/marketplace?tab=auctions" className="text-xs font-semibold text-[var(--color-primary)] hover:underline">
+                Browse auctions
+              </Link>
+            </div>
+            {registeredAuctions.length ? (
+              <div className="divide-y divide-[var(--color-border)]">
+                {registeredAuctions.map((registration) => (
+                  <div key={registration.id} className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-input)]">
+                        {registration.auctionItem.images?.[0]?.url
+                          ? <img src={registration.auctionItem.images[0].url} alt="" className="h-full w-full object-cover" loading="lazy" />
+                          : <Package className="h-5 w-5 text-[var(--color-muted)]" />}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-[var(--color-text)]">{registration.auctionItem.asset.title}</p>
+                        <p className="text-xs text-[var(--color-muted)]">{registration.auctionItem.asset.category} · {registration.status}</p>
+                      </div>
+                    </div>
+                    <Link href={getAuctionHref(registration.auctionItem)} className="shrink-0 text-xs font-semibold text-[var(--color-primary)] hover:underline">
+                      View auction
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-xl border border-dashed border-[var(--color-border)] p-6 text-center text-sm text-[var(--color-muted)]">
+                You have not registered for an auction yet.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Right Column - Sidebar */}
+        <div className="space-y-6">
+          {/* Quick Actions */}
+          <div className="bg-[var(--color-card)] p-6 rounded-2xl border border-[var(--color-border)] shadow-sm">
+            <h2 className="text-sm font-bold text-[var(--color-text)] mb-4 uppercase tracking-wider">Quick Actions</h2>
+            <div className="space-y-2">
+              {[
+                { label: "Browse Auctions", href: "/marketplace?tab=auctions", icon: Gavel, color: "text-blue-500", bg: "bg-blue-500/10" },
+                { label: "My Bids", href: "/dashboard?tab=my-bids", icon: Activity, color: "text-emerald-500", bg: "bg-emerald-500/10" },
+                { label: "My Receipts", href: "/dashboard?tab=payments", icon: Receipt, color: "text-violet-500", bg: "bg-violet-500/10" },
+                { label: "My Registrations", href: "#registered-auctions", icon: Shield, color: "text-amber-500", bg: "bg-amber-500/10" },
+              ].map((action) => (
+                <Link key={action.label} href={action.href}>
+                  <div className="flex items-center gap-3 p-3 rounded-xl hover:bg-[var(--color-input)] transition-all group cursor-pointer">
+                    <div className={`p-2 rounded-lg ${action.bg} group-hover:scale-110 transition-transform`}>
+                      <action.icon className={`w-4 h-4 ${action.color}`} />
+                    </div>
+                    <span className="text-sm font-medium text-[var(--color-text)] group-hover:text-[var(--color-primary)] transition-colors">
+                      {action.label}
+                    </span>
+                    <ChevronRight className="w-4 h-4 text-[var(--color-muted)] ml-auto group-hover:translate-x-0.5 transition-transform" />
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

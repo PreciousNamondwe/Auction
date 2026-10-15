@@ -16,9 +16,15 @@ export default function AdminDashboard({ user, pendingItems = [] }) {
       
       // 1. Pushes the database state changes directly to MariaDB and fires Pusher alerts
       const approvalResult = await approveAndStartLiveAuction(Number(itemId));
+      if (!approvalResult?.success) {
+        throw new Error(approvalResult?.error || "Could not approve this auction.");
+      }
       
       // 2. Fetch connection credentials with administrative moderator permission layers
       const tokenPayload = await getLiveKitToken(approvalResult.roomId, itemId);
+      if (!tokenPayload?.success) {
+        throw new Error(tokenPayload?.error || "Could not connect to the live auction.");
+      }
       
       // 3. Signal layout cache changes to drop the item from the pending list
       router.refresh();
